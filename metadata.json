@@ -1,0 +1,6 @@
+{
+  "name": "Autonomous Execution OS",
+  "description": "An autonomous personal execution operating system featuring production reliability and operations SRE, distributed tracing, structured logs, cryptographic state snapshots, self-healing routine engine, user-scoped cross-device continuity, background lifecycle reconciliation, and 7-pillar accountability.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
