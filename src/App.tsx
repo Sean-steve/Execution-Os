@@ -23,7 +23,7 @@ import { MobileBottomNav } from './components/MobileBottomNav';
 import { NowView } from './components/NowView';
 import { TodayView } from './components/TodayView';
 import { TomorrowPlannerView } from './components/TomorrowPlannerView';
-import { EveningReviewView } from './components/EveningReviewView';
+import { ReviewWorkspaceView } from './components/ReviewWorkspaceView';
 import { SystemWorkspaceView } from './components/SystemWorkspaceView';
 import { MorningPrimeView } from './components/MorningPrimeView';
 import { CommandCenterView } from './components/CommandCenterView';
@@ -233,7 +233,7 @@ export default function App() {
         )}
 
         {(state.activeView === 'REVIEW' || state.activeView === 'EVENING') && (
-          <EveningReviewView
+          <ReviewWorkspaceView
             state={state}
             onUpdateState={handleUpdateState}
           />
