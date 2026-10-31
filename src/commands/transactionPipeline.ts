@@ -72,6 +72,7 @@ import {
   rejectAdaptationProposal,
   measureAdaptationPerformance
 } from '../services/adaptationEngine';
+import { upsertDailyPerformanceRecord, reconcileWeeklyPerformance, generateWeeklyAdaptationRecommendations } from '../services/weeklyPerformanceIntelligence';
 
 /**
  * TransactionPipeline / Command Bus:
@@ -591,6 +592,29 @@ export class TransactionPipeline {
           ...state.dailyReview,
           ...command.payload.review,
         };
+        const reviewDate = state.dailyReview.date || state.activeDate || clock.toISOString().slice(0, 10);
+        state = upsertDailyPerformanceRecord(state, reviewDate);
+        state = reconcileWeeklyPerformance(state, reviewDate);
+        state.weeklyAdaptationRecommendations = generateWeeklyAdaptationRecommendations(state);
+
+        const daily = (state.dailyPerformanceRecords || []).find(r => r.localDate === reviewDate);
+        const weekly = (state.weeklyPerformanceRecords || []).find(w => w.weekId === daily?.weekId);
+        if (daily) {
+          createdEvents.push(createSystemEvent('DailyPerformanceFinalized', daily.id, {
+            localDate: daily.localDate,
+            score: daily.overallDailyPerformanceScore,
+            adjustedDayStrength: daily.adjustedDayStrength,
+            confidence: daily.confidence,
+          }, state, 'SYSTEM_KERNEL', undefined, clock));
+        }
+        if (weekly) {
+          createdEvents.push(createSystemEvent('WeeklyPerformanceReconciled', weekly.id, {
+            weekId: weekly.weekId,
+            score: weekly.overallWeeklyPerformanceScore,
+            bestDayDate: weekly.bestDayDate,
+            confidence: weekly.confidence,
+          }, state, 'SYSTEM_KERNEL', undefined, clock));
+        }
       } else if (command instanceof RedeemRewardCommand) {
         const reward = state.rewards.find(r => r.id === command.payload.rewardId);
         if (!reward) {
