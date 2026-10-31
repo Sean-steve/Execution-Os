@@ -160,8 +160,8 @@ describe('Conversation end-state reconciliation acceptance', () => {
     const cases = [
       { action: 'WORKOUT_TRACKER', protocol: 'protocol-workout-v1' },
       { action: 'MEDITATION_TIMER', protocol: 'protocol-meditation-v1' },
-      { action: 'TRADING_GATEKEEPER', protocol: 'protocol-trading-v1' },
-      { action: 'FAMILY_OUTING', protocol: 'protocol-family-v1' },
+      { action: 'TRADING_GATEKEEPER', protocol: 'protocol-external-gated-v1' },
+      { action: 'FAMILY_OUTING', protocol: 'protocol-presence-v1' },
     ] as const;
 
     for (const entry of cases) {
