@@ -3,7 +3,6 @@ import { PROTECTED_FAMILY_START, PROTECTED_FAMILY_END } from '../services/alloca
 import { checkTaskDependencies } from '../services/dependencyEngine';
 import {
   GovernanceDeniedError,
-  TradingGateClosedError,
   DependencyBlockedError,
   ApprovalRequiredError,
   SecurityIntegrityError
@@ -23,9 +22,9 @@ export interface GovernanceEvaluationResult {
  * Strictly enforces policy boundaries on the server side:
  * - G0: System integrity & immutable audit logging
  * - G1: Activity lifecycle & prerequisite dependencies
- * - G2: Protected commitments (Family Block, Sleep Sanctuary)
- * - G3: Trading Gatekeeper (mandatory prep, setup checklist, risk limit)
- * - G4: Autonomy boundaries (L0-L5) & manual lock
+ * - G2: Protected commitments supplied by the schedule authority
+ * - G3: Reserved for external-domain gate policy; Execution OS consumes generic gates only
+ * - G4: Bounded execution autonomy (L0-L5) & manual lock
  * - G5: Tamper-proof override signatures & double-confirmation
  */
 export class GovernanceEngine {
@@ -33,57 +32,30 @@ export class GovernanceEngine {
    * Evaluates if an activity can be started (G1, G3, G4 enforcement)
    */
   static evaluateActivityStart(state: AppState, taskId: string): GovernanceEvaluationResult {
-    // 1. Trading Gatekeeper Check (G3 Governance)
-    if (taskId === 'task-trading-execution' || taskId === 'task-trading-protocol') {
-      const depCheck = checkTaskDependencies(state, taskId);
-      if (depCheck.isBlocked) {
-        return {
-          allowed: false,
-          governanceLevel: 'G3',
-          error: new TradingGateClosedError(
-            `Trading Gatekeeper Blocked: ${depCheck.blockingReasons.join('; ')}`,
-            { blockingReasons: depCheck.blockingReasons, taskId, rule: 'G3_TRADING_GATE' }
-          ),
-        };
-      }
-
-      // Check trading rules in state
-      if (!state.tradingProtocol?.marketAnalyzed && !state.tradingProtocol?.preMarketAnalysisDone && taskId === 'task-trading-execution') {
-        return {
-          allowed: false,
-          governanceLevel: 'G3',
-          error: new TradingGateClosedError(
-            'Trading Gatekeeper Blocked: Pre-market analysis must be completed before starting live trading execution.',
-            { taskId, rule: 'G3_TRADING_PREP_REQUIRED' }
-          ),
-        };
-      }
-    }
-
     const task = state.tasks.find(t => t.id === taskId);
     const def = state.activities.find(a => a.id === taskId);
     if (!task) return { allowed: true };
 
-    // 2. Generic Task Dependency check (G1 Governance)
-    const generalDepCheck = checkTaskDependencies(state, taskId);
-    if (generalDepCheck.isBlocked) {
+    // G1: Dependencies and external-engine gates are evaluated uniformly.
+    const dependencyCheck = checkTaskDependencies(state, taskId);
+    if (dependencyCheck.isBlocked) {
       return {
         allowed: false,
         governanceLevel: 'G1',
         error: new DependencyBlockedError(
-          `Dependencies not met for activity ${task.title}: ${generalDepCheck.blockingReasons.join('; ')}`,
-          { blockingReasons: generalDepCheck.blockingReasons, taskId, rule: 'G1_DEPENDENCY_RULE' }
+          `Execution blocked for ${task.title}: ${dependencyCheck.blockingReasons.join('; ')}`,
+          { blockingReasons: dependencyCheck.blockingReasons, taskId, rule: 'G1_EXECUTION_DEPENDENCY_OR_EXTERNAL_GATE' }
         ),
       };
     }
 
-    // 3. Autonomy Manual / Red Mode check (G4 Governance)
+    // G4: Execution OS owns bounded execution autonomy, not whole-person policy.
     if (state.autonomyLevel === 5 && state.activeHumanDecision) {
       return {
         allowed: false,
         governanceLevel: 'G4',
         requiresApproval: true,
-        error: new ApprovalRequiredError('System is in Autonomy Level 5 (MANUAL / Human Approval Required). Decision must be approved before activity start.', {
+        error: new ApprovalRequiredError('Human approval is required before activity start.', {
           decisionId: state.activeHumanDecision.id,
           autonomyLevel: state.autonomyLevel,
           rule: 'G4_AUTONOMY_MANUAL_LOCK',
@@ -92,19 +64,17 @@ export class GovernanceEngine {
     }
 
     const isHighFocus = def?.focusRequirement === 'HIGH';
-    const isRecovery = taskId.includes('recovery') || taskId.includes('rest');
-    if (state.currentMode === 'RED' && isHighFocus && !isRecovery) {
-      if (state.activeHumanDecision) {
-        return {
-          allowed: false,
-          governanceLevel: 'G4',
-          error: new ApprovalRequiredError('Pending decision approval required before executing high-load task in RED mode', {
-            decisionId: state.activeHumanDecision.id,
-            mode: state.currentMode,
-            rule: 'G4_RED_MODE_HIGH_LOAD_GATE',
-          }),
-        };
-      }
+    const isRecovery = task.category === 'RECOVERY' || task.id.includes('recovery') || task.id.includes('rest');
+    if (state.currentMode === 'RED' && isHighFocus && !isRecovery && state.activeHumanDecision) {
+      return {
+        allowed: false,
+        governanceLevel: 'G4',
+        error: new ApprovalRequiredError('Pending approval required before high-load execution in RED mode.', {
+          decisionId: state.activeHumanDecision.id,
+          mode: state.currentMode,
+          rule: 'G4_RED_MODE_HIGH_LOAD_GATE',
+        }),
+      };
     }
 
     return { allowed: true };
@@ -122,25 +92,27 @@ export class GovernanceEngine {
     overrideReason?: string
   ): GovernanceEvaluationResult {
     const task = state.tasks.find(t => t.id === taskId);
+    const hosCommitments = state.scheduleAuthority?.authoritativePlan?.commitments || [];
 
-    // Protected Family Block constraint (16:00 to 19:30 / 960 to 1170 mins) - G2 Governance
-    const isFamilyTask = taskId.includes('family') || task?.anchorId === 'ANCHOR_9_CONNECT';
-    const overlapsFamily = startMinutes < PROTECTED_FAMILY_END && endMinutes > PROTECTED_FAMILY_START;
+    const conflictingCommitment = hosCommitments.find(commitment =>
+      commitment.isProtected &&
+      startMinutes < commitment.endMinutes &&
+      endMinutes > commitment.startMinutes
+    );
 
-    if (overlapsFamily && !isFamilyTask) {
+    if (conflictingCommitment && !task?.isProtected) {
       if (!isEmergencyOverride || !overrideReason || overrideReason.trim().length < 5) {
         return {
           allowed: false,
           governanceLevel: 'G2',
           error: new GovernanceDeniedError(
-            `Protected Commitment Violation (G2): Non-family activity (${task?.title || taskId}) cannot overlap Protected Family block (16:00 - 19:30) without explicit emergency override and justification.`,
+            `Protected HOS commitment cannot be displaced: ${conflictingCommitment.title}.`,
             {
               taskId,
               allocatedStart: startMinutes,
               allocatedEnd: endMinutes,
-              protectedStart: PROTECTED_FAMILY_START,
-              protectedEnd: PROTECTED_FAMILY_END,
-              rule: 'G2_PROTECTED_FAMILY_DISPLACEMENT',
+              protectedCommitmentId: conflictingCommitment.id,
+              rule: 'G2_HOS_PROTECTED_COMMITMENT',
             }
           ),
         };
