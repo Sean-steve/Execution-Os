@@ -3,22 +3,7 @@ import { getCurrentTimeMinutes } from './storageService';
 import { checkTaskDependencies } from './dependencyEngine';
 import { getFallbackPolicyForTask, selectOptimalFallbackTier } from './fallbackEngine';
 import { getWeeklyPerformanceFitModifier } from './weeklyPerformanceIntelligence';
-
-// Protected boundaries (in minutes from midnight)
-export const PROTECTED_FAMILY_START = 960;  // 4:00 PM (16:00)
-export const PROTECTED_FAMILY_END = 1170;   // 7:30 PM (19:30)
-export const EVENING_REVIEW_START = 1200;   // 8:00 PM (20:00)
-export const NIGHT_SHUTDOWN_START = 1320;   // 10:00 PM (22:00)
-
-const isFamilyTask = (task: RoutineTask) => {
-  return task.id === 'task-family-life' || 
-         task.id === 'task-family-connection' || 
-         task.id === 'task-family-outing' || 
-         task.id === 'task-dinner-family' ||
-         task.anchorId === 'ANCHOR_8_HUMAN_LIFE' || 
-         task.anchorId === 'ANCHOR_9_CONNECT' ||
-         task.associatedPillar === 'family';
-};
+import { getProtectedScheduleWindows, reconcileWithScheduleAuthority } from './scheduleAuthorityService';
 
 export interface AllocationResult {
   allocations: DynamicAllocation[];
@@ -26,54 +11,75 @@ export interface AllocationResult {
   reallocationReason: string;
   hasScheduleCompression: boolean;
   isFeasible: boolean;
+  scheduleProposal?: import('../types').ScheduleChangeProposal;
+  autonomousChangesApplied?: number;
+  proposedChangesCount?: number;
 }
 
+const isProtectedExecutionTask = (state: AppState, task: RoutineTask): boolean => {
+  const definition = state.activities.find(a => a.id === task.id);
+  return Boolean(task.isProtected || definition?.isProtectedCommitment);
+};
+
+const nextProtectedWindow = (
+  state: AppState,
+  startMinutes: number,
+  endMinutes: number,
+  activityId: string
+) => getProtectedScheduleWindows(state)
+  .filter(window => window.id !== activityId && window.id !== `task-window-${activityId}`)
+  .sort((a, b) => a.startMinutes - b.startMinutes)
+  .find(window => startMinutes < window.endMinutes && endMinutes > window.startMinutes);
+
 /**
- * The Central Allocation Engine
- * Dynamically fits remaining uncompleted activities into available time slots
- * while strictly protecting high-governance anchors (Family block, Evening Review).
+ * HEE-003 allocation engine.
+ *
+ * It optimizes execution locally. In HOS_DELEGATED mode the resulting plan is
+ * reconciled against the HOS Daily Operating Plan before any changes become
+ * authoritative.
  */
 export const calculateDynamicAllocations = (state: AppState): AllocationResult => {
   const currentMinutes = getCurrentTimeMinutes(state);
   const mode = state.currentMode;
-  const dayType = state.dayType;
   const tasks = [...state.tasks];
-  
-  // Filter tasks allowed in current mode
+
   const allowedTasks = tasks
     .filter(t => (t.modesAllowed || ['GREEN', 'YELLOW', 'RED', 'BLACK']).includes(mode))
     .sort((a, b) => {
       const nominalDiff = a.startMinutes - b.startMinutes;
-      // Preserve broad schedule order. WPI may only influence flexible tasks already near each other.
-      if (Math.abs(nominalDiff) > 60 || a.isProtected || b.isProtected || a.isNonNegotiable || b.isNonNegotiable) {
+      if (
+        Math.abs(nominalDiff) > 60 ||
+        isProtectedExecutionTask(state, a) ||
+        isProtectedExecutionTask(state, b) ||
+        a.isNonNegotiable ||
+        b.isNonNegotiable
+      ) {
         return nominalDiff;
       }
       const aFit = getWeeklyPerformanceFitModifier(state, a);
       const bFit = getWeeklyPerformanceFitModifier(state, b);
-      const aKey = a.startMinutes - aFit * 2;
-      const bKey = b.startMinutes - bFit * 2;
-      return aKey - bKey;
+      return (a.startMinutes - aFit * 2) - (b.startMinutes - bFit * 2);
     });
 
-  // Determine if we have a deviation from schedule (e.g. waking late or lagging behind)
   const uncompletedPastScheduled = allowedTasks.filter(
     t => !t.completed && t.endMinutes < currentMinutes
   );
 
-  let reallocationReason = 'Nominal schedule active.';
+  let reallocationReason = 'Nominal execution plan active.';
   let hasScheduleCompression = false;
-
   if (uncompletedPastScheduled.length > 0) {
     const minutesLate = currentMinutes - Math.min(...uncompletedPastScheduled.map(t => t.startMinutes));
-    reallocationReason = `Autonomous Reallocation: Time drift of ${minutesLate}m detected. Flexible morning anchors compressed via Fallback tiers; Deep Work shifted to optimal pre-family slot; 4:00 PM Family & Evening Review protected.`;
+    reallocationReason = `Execution drift of ${minutesLate}m detected; flexible activities were recalculated within approved constraints.`;
     hasScheduleCompression = true;
-  } else if (dayType === 'EARLY_DEPARTURE') {
-    reallocationReason = 'Early Departure Mode: Morning routine compressed into rapid 9:00 AM departure envelope.';
+  } else if (state.dayType === 'EARLY_DEPARTURE') {
+    reallocationReason = 'Early-departure constraint requires local execution-plan recalculation.';
     hasScheduleCompression = true;
   }
 
-  let scheduleCursor = Math.max(currentMinutes, 330); // start at current time or 5:30 AM
-  let familyCursor = PROTECTED_FAMILY_START;
+  const earliestPlannedStart = allowedTasks.length
+    ? Math.min(...allowedTasks.map(t => t.startMinutes))
+    : currentMinutes;
+  let scheduleCursor = Math.max(currentMinutes, earliestPlannedStart);
 
   const allocations: DynamicAllocation[] = [];
   const recalculatedTasks: RoutineTask[] = [];
@@ -81,16 +87,9 @@ export const calculateDynamicAllocations = (state: AppState): AllocationResult =
   for (const task of allowedTasks) {
     const depCheck = checkTaskDependencies(state, task.id);
     const fallbackPolicy = getFallbackPolicyForTask(state, task.id);
-    
-    // Check if task is protected
-    const isProtected = 
-      task.id === 'task-family-life' || 
-      task.anchorId === 'ANCHOR_8_HUMAN_LIFE' || 
-      task.anchorId === 'ANCHOR_9_CONNECT' ||
-      task.isNonNegotiable && (task.id === 'task-command-center' || task.id === 'task-evening-review');
+    const isProtected = isProtectedExecutionTask(state, task);
 
-    if (task.completed) {
-      // Completed tasks stay in their original or recorded time
+    if (task.completed || isProtected) {
       const allocStart = task.allocatedStartMinutes ?? task.startMinutes;
       const allocEnd = task.allocatedEndMinutes ?? task.endMinutes;
       allocations.push({
@@ -102,80 +101,62 @@ export const calculateDynamicAllocations = (state: AppState): AllocationResult =
         allocatedStartMinutes: allocStart,
         allocatedEndMinutes: allocEnd,
         durationMinutes: allocEnd - allocStart,
-        isCompressed: (allocEnd - allocStart) < (task.endMinutes - task.startMinutes),
+        isCompressed: false,
         isFallback: (task.fallbackLevel || 0) > 0,
         fallbackLevel: task.fallbackLevel || 0,
         isProtected,
         priority: task.isNonNegotiable ? 5 : 3,
-        reasonForAdjustment: task.executionStatus === 'MISSED_LATE' ? 'Completed with Late Penalty' : 'Executed on time',
-        dependencyStatus: 'SATISFIED',
+        reasonForAdjustment: task.completed
+          ? 'Historical execution preserved.'
+          : 'Protected/fixed commitment retained from authoritative plan.',
+        dependencyStatus: depCheck.isBlocked ? 'BLOCKED' : 'SATISFIED',
       });
       recalculatedTasks.push(task);
+      if (!task.completed) scheduleCursor = Math.max(scheduleCursor, allocEnd + 5);
       continue;
     }
 
-    // Uncompleted task logic
-    let targetStart = task.startMinutes;
-    let targetEnd = task.endMinutes;
-    let standardDuration = task.endMinutes - task.startMinutes;
+    const standardDuration = Math.max(1, task.endMinutes - task.startMinutes);
+    let targetStart = Math.max(task.startMinutes, scheduleCursor);
     let allocatedDuration = standardDuration;
-    let isCompressed = false;
+    let targetEnd = targetStart + allocatedDuration;
     let fallbackLevel = 0;
-    let adjustmentReason = 'Scheduled nominally';
+    let isCompressed = false;
+    let adjustmentReason = targetStart === task.startMinutes
+      ? 'Scheduled nominally.'
+      : 'Shifted locally to preserve execution continuity.';
 
-    if (isFamilyTask(task)) {
-      // Family commitments strictly occupy the 16:00 - 19:30 window
-      targetStart = Math.max(familyCursor, task.startMinutes);
-      allocatedDuration = Math.max(15, standardDuration);
-      targetEnd = targetStart + allocatedDuration;
-      familyCursor = targetEnd + 5;
-      adjustmentReason = 'Protected family commitment strictly preserved.';
-    } else if (task.id === 'task-evening-review' || task.id === 'task-daily-analysis' || task.anchorId === 'ANCHOR_10_REVIEW') {
-      targetStart = Math.max(EVENING_REVIEW_START, scheduleCursor > PROTECTED_FAMILY_END ? scheduleCursor : EVENING_REVIEW_START);
-      allocatedDuration = standardDuration;
-      targetEnd = targetStart + allocatedDuration;
-      adjustmentReason = 'Evening review preserved for 8:00 PM reset.';
-      scheduleCursor = targetEnd + 5;
-    } else {
-      // Work / Routine / Body task
-      targetStart = Math.max(currentMinutes > task.startMinutes ? scheduleCursor : task.startMinutes, scheduleCursor);
-
-      if (targetStart < PROTECTED_FAMILY_START) {
-        const maxAvailable = PROTECTED_FAMILY_START - targetStart;
-        if (maxAvailable <= 10) {
-          // No remaining time before family window: defer to after family block
-          targetStart = Math.max(PROTECTED_FAMILY_END, scheduleCursor);
-          allocatedDuration = standardDuration;
-          targetEnd = targetStart + allocatedDuration;
-          adjustmentReason = 'Work deferred to post-family window to protect 4:00 PM commitment.';
-        } else if (standardDuration > maxAvailable) {
-          if (fallbackPolicy) {
-            const optimalTier = selectOptimalFallbackTier(fallbackPolicy, maxAvailable, mode);
-            allocatedDuration = optimalTier.durationMinutes;
-            fallbackLevel = optimalTier.level;
-            isCompressed = optimalTier.level > 0;
-            adjustmentReason = `Compressed to Fallback Level ${optimalTier.level} (${optimalTier.title}) to protect 4:00 PM Family block.`;
-          } else {
-            allocatedDuration = Math.max(10, maxAvailable);
-            isCompressed = true;
-            adjustmentReason = 'Work compressed to strictly protect 4:00 PM Family commitment.';
-          }
-          targetEnd = Math.min(PROTECTED_FAMILY_START, targetStart + allocatedDuration);
-        } else {
-          allocatedDuration = standardDuration;
-          targetEnd = targetStart + allocatedDuration;
-        }
-      } else if (targetStart >= PROTECTED_FAMILY_START && targetStart < PROTECTED_FAMILY_END) {
-        // Encroaching on family block: immediately defer past family block
-        targetStart = PROTECTED_FAMILY_END;
-        allocatedDuration = standardDuration;
+    let conflict = nextProtectedWindow(state, targetStart, targetEnd, task.id);
+    if (conflict) {
+      const availableBefore = conflict.startMinutes - targetStart;
+      if (availableBefore >= standardDuration) {
+        targetEnd = targetStart + standardDuration;
+      } else if (availableBefore >= 10 && fallbackPolicy) {
+        const tier = selectOptimalFallbackTier(fallbackPolicy, availableBefore, mode);
+        allocatedDuration = Math.min(availableBefore, tier.durationMinutes);
+        fallbackLevel = tier.level;
+        isCompressed = tier.level > 0 || allocatedDuration < standardDuration;
         targetEnd = targetStart + allocatedDuration;
-        adjustmentReason = 'Work shifted past protected family hours.';
+        adjustmentReason = `Compressed using fallback tier ${tier.level} to preserve protected "${conflict.label || conflict.id}".`;
       } else {
-        allocatedDuration = standardDuration;
-        targetEnd = targetStart + allocatedDuration;
+        targetStart = conflict.endMinutes;
+        targetEnd = targetStart + standardDuration;
+        adjustmentReason = `Deferred until after protected "${conflict.label || conflict.id}".`;
       }
-      scheduleCursor = targetEnd + 5;
+    }
+
+    // A later protected window may still conflict after the first shift.
+    conflict = nextProtectedWindow(state, targetStart, targetEnd, task.id);
+    if (conflict) {
+      targetStart = conflict.endMinutes;
+      targetEnd = targetStart + allocatedDuration;
+      adjustmentReason = `Deferred until after protected "${conflict.label || conflict.id}".`;
+    }
+
+    const fit = getWeeklyPerformanceFitModifier(state, task);
+    if (fit) {
+      const sign = fit > 0 ? '+' : '';
+      adjustmentReason += ` Weekly performance fit ${sign}${fit} (soft evidence only).`;
     }
 
     allocations.push({
@@ -190,14 +171,9 @@ export const calculateDynamicAllocations = (state: AppState): AllocationResult =
       isCompressed,
       isFallback: fallbackLevel > 0,
       fallbackLevel,
-      isProtected,
+      isProtected: false,
       priority: task.isNonNegotiable ? 5 : 3,
-      reasonForAdjustment: (() => {
-        const fit = getWeeklyPerformanceFitModifier(state, task);
-        if (!fit) return adjustmentReason;
-        const sign = fit > 0 ? '+' : '';
-        return `${adjustmentReason} Weekly performance fit: ${sign}${fit} (soft HEE-003 signal).`;
-      })(),
+      reasonForAdjustment: adjustmentReason,
       dependencyStatus: depCheck.isBlocked ? 'BLOCKED' : 'SATISFIED',
     });
 
@@ -207,14 +183,27 @@ export const calculateDynamicAllocations = (state: AppState): AllocationResult =
       allocatedEndMinutes: targetEnd,
       fallbackLevel,
     });
+    scheduleCursor = targetEnd + 5;
   }
 
-  return {
+  const authority = reconcileWithScheduleAuthority(
+    state,
     allocations,
     recalculatedTasks,
-    reallocationReason,
+    reallocationReason
+  );
+
+  return {
+    allocations: authority.allocations,
+    recalculatedTasks: authority.tasks,
+    reallocationReason: authority.proposal
+      ? `${reallocationReason} HOS approval required for ${authority.proposedChangesCount} change(s).`
+      : reallocationReason,
     hasScheduleCompression,
     isFeasible: true,
+    scheduleProposal: authority.proposal,
+    autonomousChangesApplied: authority.autonomousChangesApplied,
+    proposedChangesCount: authority.proposedChangesCount,
   };
 };
 
