@@ -4,7 +4,9 @@ import { AppState, RoutineTask, AdaptationProposal, SystemEvent } from '../types
 import { evaluateRoutineState } from '../services/routineEngine';
 import { scanAndResolveDeviations } from '../services/deviationEngine';
 import { getTaskFallbackTiers, getFallbackPolicyForTask } from '../services/fallbackEngine';
-import { calculateDynamicAllocations, PROTECTED_FAMILY_START, PROTECTED_FAMILY_END } from '../services/allocationEngine';
+import { calculateDynamicAllocations } from '../services/allocationEngine';
+const PROTECTED_FAMILY_START = 960;
+const PROTECTED_FAMILY_END = 1170;
 import { getAutonomousNextDecision } from '../services/decisionEngine';
 import { checkTaskDependencies } from '../services/dependencyEngine';
 import { reconcileLifecycleState } from '../services/reconciliationEngine';
@@ -17,7 +19,7 @@ import {
   scanLongitudinalAdaptations,
   applyAdaptationProposal,
   rollbackAdaptationProposal,
-  } from '../services/adaptationEngine';
+} from '../services/adaptationEngine';
 import { defaultObservability } from '../services/observabilityService';
 import { defaultTracing } from '../services/tracingService';
 import { defaultMetrics } from '../services/metricsService';
