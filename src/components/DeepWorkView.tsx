@@ -374,7 +374,7 @@ export const DeepWorkView: React.FC<DeepWorkViewProps> = ({
                   type="text"
                   value={companyName}
                   onChange={e => setCompanyName(e.target.value)}
-                  placeholder="e.g. NFlake Revenue Engine"
+                  placeholder="e.g. Current venture or project"
                   className="w-full mt-1 bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-900 font-semibold focus:bg-white focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
                 />
               </div>
