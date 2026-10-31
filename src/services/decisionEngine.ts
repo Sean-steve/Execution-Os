@@ -5,6 +5,7 @@ import { getTaskFallbackTiers } from './fallbackEngine';
 import { calculateDynamicAllocations } from './allocationEngine';
 import { getAuthoritativeProtectedCommitments } from './scheduleAuthority';
 import { getAutonomousNextDecision as getLegacyAutonomousNextDecision } from '../adapters/legacyStandaloneDecisionEngine';
+import { getHumanStateDecisionExplanation } from '../hos/humanStateDecisionBridge';
 
 export interface AutonomousDecisionResult {
   currentTask: RoutineTask | null;
@@ -107,6 +108,11 @@ export const getAutonomousNextDecision = (state: AppState): AutonomousDecisionRe
     decisionReason = `Execute the current feasible action within the remaining ${timeUntilProtected}m before protected commitment "${nextProtected!.title}".`;
   } else {
     decisionReason = `Highest-priority feasible action in the current ${mode} execution window.`;
+  }
+
+  const humanStateExplanation = getHumanStateDecisionExplanation(state, selectedTask);
+  if (humanStateExplanation) {
+    decisionReason += ` ${humanStateExplanation}`;
   }
 
   // Compute upcoming task
