@@ -240,19 +240,32 @@ export class TransactionPipeline {
         const { taskId, executionStatus, missedWindow, penaltyCutPoints, completedAtMinutes } = command.payload;
         const completionTime = completedAtMinutes !== undefined ? completedAtMinutes : currentMinutes;
 
-        // Trading is structurally gated. Completing the parent task may never fabricate protocol evidence.
-        if (taskId === 'task-trading-prep' || taskId === 'task-trading-protocol' || taskId === 'task-trading-execution') {
+        // Trading is structurally gated. Completion may never fabricate protocol evidence.
+        if (taskId === 'task-trading-prep' || taskId === 'task-trading-protocol') {
           const p = state.tradingProtocol;
           const disciplinedNoTrade = p.marketAnalyzed && p.closedTerminal && p.noSetupJustified && !p.executed;
-          const validTrade =
+          const validSetupPrepared =
+            p.marketAnalyzed &&
+            p.setupDetected &&
+            p.strategyCriteriaMet &&
+            p.riskLimitsSatisfied &&
+            p.stopLossDefined;
+          if (!disciplinedNoTrade && !validSetupPrepared) {
+            throw new Error('TRADING_GATE_CLOSED: Trading preparation cannot complete until analysis produces either a valid setup or a disciplined No Trade terminal outcome.');
+          }
+        }
+        if (taskId === 'task-trading-execution') {
+          const p = state.tradingProtocol;
+          const validExecutedTrade =
             p.marketAnalyzed &&
             p.setupDetected &&
             p.strategyCriteriaMet &&
             p.riskLimitsSatisfied &&
             p.stopLossDefined &&
+            p.executed &&
             p.closedTerminal;
-          if (!disciplinedNoTrade && !validTrade) {
-            throw new Error('TRADING_GATE_CLOSED: Trading activity cannot complete until the protocol reaches a valid terminal outcome.');
+          if (!validExecutedTrade) {
+            throw new Error('TRADING_GATE_CLOSED: Trading execution cannot complete until a valid executed trade reaches terminal closure.');
           }
         }
 
