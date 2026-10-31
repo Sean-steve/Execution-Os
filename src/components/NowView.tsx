@@ -29,11 +29,10 @@ import { getAutonomousNextDecision } from '../services/decisionEngine';
 import { formatMinutesToTime, getCurrentTimeMinutes } from '../services/storageService';
 import { getActiveDayTheme } from '../services/dayThemeService';
 import { sound } from '../services/soundService';
-import { logEventToState } from '../services/eventBus';
-import { scanAndResolveDeviations } from '../services/deviationEngine';
 import { RealityChangeModal } from './ui/RealityChangeModal';
 import { WhyThisModal } from './ui/WhyThisModal';
 import confetti from 'canvas-confetti';
+import { defaultApplicationService } from '../services/executionApplicationService';
 
 interface NowViewProps {
   state: AppState;
@@ -107,175 +106,120 @@ export const NowView: React.FC<NowViewProps> = ({
     handleDirectComplete();
   };
 
-  const handleDirectComplete = () => {
+  const handleDirectComplete = async () => {
     if (!task) return;
 
-    if (state.strictTimeEnforcement && currentMinutes > (task.endMinutes + 5)) {
+    const effectiveEnd = task.allocatedEndMinutes ?? task.endMinutes;
+    if (state.strictTimeEnforcement && currentMinutes > (effectiveEnd + 5)) {
       onRequestDisciplineModal(task);
       return;
     }
 
-    sound.playChime('success');
-    try {
-      confetti({ particleCount: 40, spread: 60, origin: { y: 0.6 } });
-    } catch {
-      // ignore
+    const result = await defaultApplicationService.completeActivity({
+      taskId: task.id,
+      completedAtMinutes: currentMinutes,
+      executionStatus: 'ON_TIME',
+      missedWindow: false,
+    }, state);
+
+    if (result.success && result.state) {
+      sound.playChime('success');
+      try { confetti({ particleCount: 40, spread: 60, origin: { y: 0.6 } }); } catch {}
+      onUpdateState(() => result.state!);
     }
-
-    onUpdateState(prev => {
-      const nextTasks = prev.tasks.map(t =>
-        t.id === task.id
-          ? {
-              ...t,
-              completed: true,
-              completedAtMinutes: currentMinutes,
-              completedAtDate: new Date().toISOString(),
-              executionStatus: 'ON_TIME' as const,
-              missedWindow: false,
-            }
-          : t
-      );
-
-      let nextState: AppState = {
-        ...prev,
-        tasks: nextTasks,
-        rewardPoints: prev.rewardPoints + 5,
-      };
-
-      nextState = logEventToState(
-        nextState,
-        'ActivityCompleted',
-        `Completed: ${task.title}`,
-        { taskId: task.id, completedAtMinutes: currentMinutes }
-      );
-
-      const scan = scanAndResolveDeviations(nextState);
-      return scan.updatedState;
-    });
   };
 
-  const handlePerformWorkspace = () => {
+  const handlePerformWorkspace = async () => {
     if (!task) return;
     sound.playChime('start');
-    onUpdateState(prev => {
-      // Find existing active session or create new one
-      const existing = (prev.performanceSessions || []).find(
-        s => s.activityInstanceId === task.id && s.status !== 'COMPLETED' && s.status !== 'CANCELLED'
-      );
-      if (existing) {
-        return {
-          ...prev,
-          activePerformanceSessionId: existing.id,
-          activeView: 'PERFORMANCE'
-        };
-      }
 
-      // Automatically create a performance session
-      const nowUtc = new Date().toISOString();
-      const newSession: any = {
-        id: `perf-session-${Date.now()}`,
-        userId: 'usr-default-owner',
-        activityInstanceId: task.id,
-        activityDefinitionId: task.anchorId || task.id,
-        routineVersionId: 'v1.0.0',
-        title: task.title,
-        objective: task.notes || task.title,
-        environmentType: task.interactiveActionType === 'FOCUS_BLOCK' ? 'ASSISTED' : (task.interactiveActionType === 'FAMILY_OUTING' ? 'EXTERNAL' : 'GUIDED'),
-        status: 'CREATED',
-        effectiveAllocationStartMinutes: task.allocatedStartMinutes ?? task.startMinutes,
-        effectiveAllocationEndMinutes: task.allocatedEndMinutes ?? task.endMinutes,
-        targetDurationMinutes: Math.max(15, (task.allocatedEndMinutes ?? task.endMinutes) - (task.allocatedStartMinutes ?? task.startMinutes)),
-        minimumDurationMinutes: 10,
-        activeDurationSeconds: 0,
-        pausedDurationSeconds: 0,
-        currentStepIndex: 0,
-        stepExecutions: [
-          { stepId: 'step-1', stepType: 'PREPARE', title: 'Prepare & Eliminate Distractions', status: 'READY', accumulatedSeconds: 0 },
-          { stepId: 'step-2', stepType: 'TIMER', title: 'Focused Execution', status: 'PENDING', accumulatedSeconds: 0 },
-          { stepId: 'step-3', stepType: 'CLOSE', title: 'Outcome Evaluation & Debrief', status: 'PENDING', accumulatedSeconds: 0 }
-        ],
-        interruptions: [],
-        evidence: [],
-        artifacts: [],
-        extensionRequests: [],
-        environmentConfig: {
-          environmentType: task.interactiveActionType === 'FAMILY_OUTING' ? 'EXTERNAL' : 'ASSISTED',
-          allowedTools: ['CODE_EDITOR', 'NOTES', 'AI_PARTNER'],
-          aiMode: task.interactiveActionType === 'FAMILY_OUTING' ? 'SILENT' : 'COACH',
-          screenAwayPolicy: task.interactiveActionType === 'FAMILY_OUTING' ? 'ENCOURAGE_OFFLINE' : 'NONE',
-          distractionShieldEnabled: true,
-          ambientSoundAllowed: true
-        },
-        createdBy: 'USER',
-        version: 1,
-        createdAtUtc: nowUtc,
-        updatedAtUtc: nowUtc
-      };
+    const existing = (state.performanceSessions || []).find(
+      s => s.activityInstanceId === task.id && !['COMPLETED', 'PARTIAL', 'ABANDONED', 'CANCELLED'].includes(s.status)
+    );
 
-      return {
+    if (existing) {
+      onUpdateState(prev => ({
         ...prev,
-        performanceSessions: [...(prev.performanceSessions || []), newSession],
-        activePerformanceSessionId: newSession.id,
-        activeView: 'PERFORMANCE'
-      };
-    });
-  };
-
-  const handleDoneEarly = () => {
-    if (!task) return;
-    sound.playChime('success');
-    try {
-      confetti({ particleCount: 35, spread: 50, origin: { y: 0.6 } });
-    } catch {
-      // ignore
+        activePerformanceSessionId: existing.id,
+        activeView: 'PERFORMANCE',
+      }));
+      return;
     }
 
-    onUpdateState(prev => {
-      const nextTasks = prev.tasks.map(t =>
-        t.id === task.id
-          ? {
-              ...t,
-              completed: true,
-              completedAtMinutes: currentMinutes,
-              executionStatus: 'ON_TIME' as const,
-            }
-          : t
-      );
+    const result = await defaultApplicationService.execute({
+      type: 'CreatePerformanceSession',
+      payload: { activityInstanceId: task.id },
+    }, state);
 
-      let nextState: AppState = {
-        ...prev,
-        tasks: nextTasks,
-        rewardPoints: prev.rewardPoints + 8, // early bonus
-      };
-
-      nextState = logEventToState(
-        nextState,
-        'ActivityCompleted',
-        `Completed early: ${task.title}`,
-        { taskId: task.id, completedAtMinutes: currentMinutes }
-      );
-
-      const scan = scanAndResolveDeviations(nextState);
-      return scan.updatedState;
-    });
+    if (result.success && result.state) {
+      onUpdateState(() => result.state!);
+    }
   };
 
-  const handleNeedMoreTime = () => {
+  const handleDoneEarly = async () => {
+    if (!task) return;
+
+    let workingState = state;
+    const effectiveStart = task.allocatedStartMinutes ?? task.startMinutes;
+
+    if (currentMinutes < effectiveStart) {
+      const advance = await defaultApplicationService.advanceActivity(
+        task.id,
+        Math.max(1, effectiveStart - currentMinutes),
+        'User explicitly advanced this activity from NOW before its effective window.',
+        workingState
+      );
+      if (!advance.success || !advance.state) return;
+      workingState = advance.state;
+    }
+
+    const result = await defaultApplicationService.completeActivity({
+      taskId: task.id,
+      completedAtMinutes: currentMinutes,
+      executionStatus: 'ON_TIME',
+      missedWindow: false,
+    }, workingState);
+
+    if (result.success && result.state) {
+      sound.playChime('success');
+      try { confetti({ particleCount: 35, spread: 50, origin: { y: 0.6 } }); } catch {}
+      onUpdateState(() => result.state!);
+    }
+  };
+
+  const handleNeedMoreTime = async () => {
     if (!task) return;
     sound.playChime('start');
-    onUpdateState(prev => {
-      const nextTasks = prev.tasks.map(t =>
-        t.id === task.id
-          ? {
-              ...t,
-              allocatedEndMinutes: (t.allocatedEndMinutes ?? t.endMinutes) + 15,
-            }
-          : t
-      );
-      let nextState: AppState = { ...prev, tasks: nextTasks };
-      const scan = scanAndResolveDeviations(nextState);
-      return scan.updatedState;
-    });
+
+    let workingState = state;
+    let session = (workingState.performanceSessions || []).find(
+      s => s.activityInstanceId === task.id && !['COMPLETED', 'PARTIAL', 'ABANDONED', 'CANCELLED'].includes(s.status)
+    );
+
+    if (!session) {
+      const created = await defaultApplicationService.execute({
+        type: 'CreatePerformanceSession',
+        payload: { activityInstanceId: task.id },
+      }, workingState);
+      if (!created.success || !created.state) return;
+      workingState = created.state;
+      session = (workingState.performanceSessions || []).find(s => s.id === workingState.activePerformanceSessionId);
+    }
+
+    if (!session) return;
+
+    const extended = await defaultApplicationService.execute({
+      type: 'RequestPerformanceExtension',
+      payload: {
+        sessionId: session.id,
+        requestedMinutes: 15,
+        reason: 'User requested more time from NOW.',
+      },
+    }, workingState);
+
+    if (extended.success && extended.state) {
+      onUpdateState(() => extended.state!);
+    }
   };
 
   const handleCantDoThis = () => {
