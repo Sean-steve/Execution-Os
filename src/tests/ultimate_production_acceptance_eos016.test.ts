@@ -38,7 +38,10 @@ describe('Sprint 12: Full Execution OS Production Acceptance (EOS-000 through EO
   let state: AppState;
 
   beforeEach(() => {
-    state = JSON.parse(JSON.stringify(LEGACY_STANDALONE_FIXTURE_STATE));
+    state = {
+      ...JSON.parse(JSON.stringify(LEGACY_STANDALONE_FIXTURE_STATE)),
+      legacyStandaloneCompatibility: true,
+    } as AppState;
     defaultObservability.clear();
     defaultTracing.clear();
     defaultMetrics.reset();
