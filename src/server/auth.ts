@@ -68,6 +68,14 @@ export function authMiddleware(req: Request, _res: Response, next: NextFunction)
     try {
       const subject = HOSIdentityBridge.fromRequest(req);
       req.hosSubject = subject;
+
+      if (path.startsWith('/api/v1/hee/') && !subject.permissions.includes('execution.legacy.api')) {
+        return next(new AuthorizationError(
+          'Direct legacy HEE API access is disabled for HOS subjects. Use the HOS engine capability contract.',
+          { requiredPermission: 'execution.legacy.api', path }
+        ));
+      }
+
       req.user = {
         userId: subject.subjectId,
         tenantId: subject.tenantId,
