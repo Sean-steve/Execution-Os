@@ -12,11 +12,12 @@ import { IClock, getClockForState, formatMinutesTo12Hour } from '../clock';
 import { createSystemEvent } from './eventBus';
 import { calculate7Pillars } from './storageService';
 import { activateTomorrowIntent, executeLateWakeRecovery, evaluateTomorrowFeasibility } from './tomorrowPlanningEngine';
-import { calculateDynamicAllocations, PROTECTED_FAMILY_START } from './allocationEngine';
+import { calculateDynamicAllocations } from './allocationEngine';
 import { evaluateRoutineState } from './routineEngine';
 import { getAutonomousNextDecision } from './decisionEngine';
 import { defaultExecutionAuditService } from './executionAuditService';
 import { defaultDurableEventStore } from './durableEventStore';
+import { getProtectedScheduleWindows } from './scheduleAuthorityService';
 
 export interface ReconciliationOptions {
   forceDayBoundary?: boolean;
@@ -91,7 +92,7 @@ export function reconcileLifecycleState(
 
     // A. Archive Yesterday's State to History (if not already archived for prevActiveDate)
     const alreadyArchived = (state.history || []).some(h => h.date === prevActiveDate);
-    if (!alreadyArchived) {
+    if (!alreadyArchived && state.scheduleAuthority?.mode !== 'HOS_DELEGATED') {
       const pillarsEval = calculate7Pillars(state);
       const topVictory = state.victoryQuestionAnswer || state.dailyReview?.winsAndVictories || 'Maintained continuous operational discipline';
 
@@ -179,8 +180,11 @@ export function reconcileLifecycleState(
   const awakenTask = state.tasks.find(t => t.id === 'task-awaken' || t.anchorId === 'ANCHOR_1_AWAKEN');
   const hasCompletedMorningAnchor = awakenTask?.completed;
 
-  // If awaken task exists and is past wake + 20m uncompleted and we haven't recovered today
-  if (awakenTask && !awakenTask.completed && currentMinutes >= (plannedWake + 20) && currentMinutes < PROTECTED_FAMILY_START) {
+  // If a delegated wake/activity anchor is late, recover only when not inside a protected host window.
+  const activeProtectedWindow = getProtectedScheduleWindows(state).find(
+    window => currentMinutes >= window.startMinutes && currentMinutes < window.endMinutes
+  );
+  if (awakenTask && !awakenTask.completed && currentMinutes >= (plannedWake + 20) && !activeProtectedWindow) {
     const drift = currentMinutes - plannedWake;
     lateWakeDetected = true;
     lateWakeDriftMinutes = drift;
@@ -196,7 +200,7 @@ export function reconcileLifecycleState(
         timestamp: nowIso,
         type: 'RECOVERY',
         title: 'Autonomous Late Wake Recovery Applied',
-        message: `Detected wake drift of +${drift}m. Morning anchors compressed to tier fallbacks to protect 4:00 PM family boundary.`,
+        message: `Detected execution drift of +${drift}m. Recovery was evaluated against current protected schedule boundaries.`,
         priority: 'HIGH',
         read: false,
         metadata: { driftMinutes: drift, wakeMinutes: currentMinutes },
