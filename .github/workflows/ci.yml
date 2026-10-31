@@ -1,5 +1,9 @@
 name: Execution OS CI
 
+concurrency:
+  group: execution-os-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches:
