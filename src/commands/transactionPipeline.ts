@@ -49,7 +49,7 @@ import {
   CancelPerformanceSessionCommand,
   RedeemRewardCommand
 } from './commands';
-import { performanceEngine } from '../services/performanceEngine';
+import { HumanPerformanceEngine } from '../services/performanceEngine';
 import { evaluateRoutineState } from '../services/routineEngine';
 import { calculateDynamicAllocations, PROTECTED_FAMILY_START, PROTECTED_FAMILY_END } from '../services/allocationEngine';
 import { scanAndResolveDeviations } from '../services/deviationEngine';
@@ -102,6 +102,7 @@ export class TransactionPipeline {
     const context: CommandContext = { clock, repository, unitOfWork: customContext?.unitOfWork };
 
     const currentMinutes = clock.getCurrentTimeMinutes();
+    const performanceEngine = new HumanPerformanceEngine(clock);
     const createdEvents: SystemEvent[] = [];
 
     // 2. VALIDATION STAGE
@@ -621,7 +622,7 @@ export class TransactionPipeline {
         const session = performanceEngine.createSession(state, command.payload.activityInstanceId, {
           environmentType: command.payload.environmentType,
           protocolId: command.payload.protocolId,
-          userId: 'usr-default-owner'
+          userId: 'user_primary'
         });
         state.performanceSessions = [...(state.performanceSessions || []), session];
         state.activePerformanceSessionId = session.id;
