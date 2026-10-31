@@ -1,5 +1,6 @@
 import { AppState, RoutineTask, UserOverrideRecord } from '../types';
 import { checkTaskDependencies } from '../services/dependencyEngine';
+import { getAuthoritativeProtectedCommitments } from '../services/scheduleAuthority';
 import {
   GovernanceDeniedError,
   DependencyBlockedError,
@@ -91,10 +92,10 @@ export class GovernanceEngine {
     overrideReason?: string
   ): GovernanceEvaluationResult {
     const task = state.tasks.find(t => t.id === taskId);
-    const hosCommitments = state.scheduleAuthority?.authoritativePlan?.commitments || [];
+    const protectedCommitments = getAuthoritativeProtectedCommitments(state);
 
-    const conflictingCommitment = hosCommitments.find(commitment =>
-      commitment.isProtected &&
+    const conflictingCommitment = protectedCommitments.find(commitment =>
+      commitment.sourceRef !== taskId &&
       startMinutes < commitment.endMinutes &&
       endMinutes > commitment.startMinutes
     );
@@ -105,13 +106,13 @@ export class GovernanceEngine {
           allowed: false,
           governanceLevel: 'G2',
           error: new GovernanceDeniedError(
-            `Protected HOS commitment cannot be displaced: ${conflictingCommitment.title}.`,
+            `Protected commitment cannot be displaced: ${conflictingCommitment.title}.`,
             {
               taskId,
               allocatedStart: startMinutes,
               allocatedEnd: endMinutes,
               protectedCommitmentId: conflictingCommitment.id,
-              rule: 'G2_HOS_PROTECTED_COMMITMENT',
+              rule: 'G2_AUTHORITATIVE_PROTECTED_COMMITMENT',
             }
           ),
         };
