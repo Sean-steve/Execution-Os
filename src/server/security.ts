@@ -89,10 +89,15 @@ export class SecurityEngine {
   static generateSessionToken(
     userId: string,
     role: 'OWNER' | 'ADMIN' | 'READONLY' = 'OWNER',
-    tenantId: string = 'tenant-default',
+    tenantId: string = 'tenant-standalone',
     durationSeconds: number = 86400,
     customPermissions?: string[]
   ): string {
+    if (process.env.EXECUTION_OS_IDENTITY_MODE !== 'LEGACY_STANDALONE') {
+      throw new SecurityIntegrityError(
+        'Execution OS session-token generation is disabled while HumanKernelOS is the identity authority.'
+      );
+    }
     const defaultPerms =
       role === 'READONLY'
         ? ['read:execution']
