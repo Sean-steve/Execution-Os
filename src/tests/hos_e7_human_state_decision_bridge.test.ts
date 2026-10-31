@@ -114,7 +114,7 @@ describe('HumanKernelOS E7 — Human State & Decision Bridge', () => {
   it('publishes the E7 Human State / PDIE / behavioral-signal contract in the engine manifest', async () => {
     const res = await request(app).get('/api/v1/hos/manifest');
     expect(res.status).toBe(200);
-    expect(res.body.data.engineVersion).toBe('E7');
+    expect(Number(String(res.body.data.engineVersion).replace(/^E/, ''))).toBeGreaterThanOrEqual(7);
     expect(res.body.data.consumesSignals).toContain('hos.human_state.updated');
     expect(res.body.data.consumesSignals).toContain('hos.pdie.recommendation.created');
     expect(res.body.data.publishesEvents).toContain('execution.behavior.signal');

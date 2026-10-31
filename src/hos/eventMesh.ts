@@ -41,7 +41,14 @@ export class MemoryHOSEventMeshTransport implements IHOSEventMeshTransport {
 }
 
 export class HttpHOSEventMeshTransport implements IHOSEventMeshTransport {
-  constructor(private endpoint = process.env.HOS_EVENT_MESH_URL || '') {}
+  private timeoutMs: number;
+
+  constructor(
+    private endpoint = process.env.HOS_EVENT_MESH_URL || '',
+    timeoutMs = Number.parseInt(process.env.HOS_EVENT_MESH_TIMEOUT_MS || '5000', 10)
+  ) {
+    this.timeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.min(timeoutMs, 30000) : 5000;
+  }
 
   async publish(event: HOSEventEnvelope): Promise<void> {
     if (!this.endpoint) throw new Error('HOS_EVENT_MESH_URL is not configured.');
@@ -50,17 +57,29 @@ export class HttpHOSEventMeshTransport implements IHOSEventMeshTransport {
 
     const body = JSON.stringify(event);
     const signature = crypto.createHmac('sha256', secret).update(body).digest('hex');
-    const response = await fetch(this.endpoint, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-execution-os-signature': signature,
-        'x-execution-os-event-id': event.id,
-      },
-      body,
-    });
-    if (!response.ok) {
-      throw new Error(`HOS Event Mesh rejected event ${event.id} with HTTP ${response.status}.`);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const response = await fetch(this.endpoint, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-execution-os-signature': signature,
+          'x-execution-os-event-id': event.id,
+        },
+        body,
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`HOS Event Mesh rejected event ${event.id} with HTTP ${response.status}.`);
+      }
+    } catch (error: any) {
+      if (error?.name === 'AbortError') {
+        throw new Error(`HOS Event Mesh delivery timed out after ${this.timeoutMs}ms for event ${event.id}.`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
     }
   }
 }

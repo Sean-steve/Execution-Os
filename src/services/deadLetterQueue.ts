@@ -128,8 +128,9 @@ export class FileDeadLetterQueue implements IDeadLetterQueue {
     const dir = path.dirname(this.filePath);
     fs.mkdirSync(dir, { recursive: true });
     const tmp = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify([...this.entries.values()], null, 2), 'utf-8');
+    fs.writeFileSync(tmp, JSON.stringify([...this.entries.values()], null, 2), { encoding: 'utf-8', mode: 0o600 });
     fs.renameSync(tmp, this.filePath);
+    fs.chmodSync(this.filePath, 0o600);
   }
 
   async enqueue(raw: Omit<DeadLetterEntry, 'id' | 'status' | 'firstFailedAt' | 'lastFailedAt'>): Promise<DeadLetterEntry> {

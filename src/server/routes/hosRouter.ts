@@ -17,6 +17,7 @@ import {
 import { HOSCapabilityService } from '../../hos/capabilityService';
 import { ApiError, AuthenticationError, ValidationError } from '../errors';
 import { IHOSBoundaryStore, MemoryHOSBoundaryStore } from '../../hos/boundaryStore';
+import { getHOSReadinessSnapshot } from '../../hos/productionHardening';
 
 function stableFingerprint(value: any): string {
   const normalize = (input: any): any => {
@@ -62,6 +63,11 @@ export function createHOSRouter(
       eventMeshConfigured: Boolean(process.env.HOS_EVENT_MESH_URL),
       timestamp: new Date().toISOString(),
     });
+  });
+
+  router.get('/readiness', (_req, res) => {
+    const readiness = getHOSReadinessSnapshot();
+    res.status(readiness.status === 'ready' ? 200 : 503).json({ success: readiness.status === 'ready', data: readiness });
   });
 
   router.get('/whoami', (req, res, next) => {

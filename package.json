@@ -11,7 +11,9 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "test:hos:cert": "vitest run src/tests/hos_e8_e9_production_hardening_certification.test.ts",
+    "certify:hos": "bun run lint && bun run test:hos:cert && bun run test && bun run build"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

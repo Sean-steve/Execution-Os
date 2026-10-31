@@ -116,8 +116,9 @@ export class FileCanonicalStorageEngine implements ICanonicalDatabaseStorageEngi
       const jsonContent = JSON.stringify(data, null, 2);
 
       try {
-        await this.fs!.writeFile(tmpPath, jsonContent, 'utf-8');
+        await this.fs!.writeFile(tmpPath, jsonContent, { encoding: 'utf-8', mode: 0o600 });
         await this.fs!.rename(tmpPath, this.filePath);
+        await this.fs!.chmod(this.filePath, 0o600);
       } catch (err: any) {
         // Clean up temp file on failure if exists
         try {
@@ -177,6 +178,7 @@ export class FileCanonicalStorageEngine implements ICanonicalDatabaseStorageEngi
 
     const backupFile = customBackupPath || path.join(targetDir, `canonical_backup_${timestamp}.json`);
     await this.fs.copyFile(this.filePath, backupFile);
+    await this.fs.chmod(backupFile, 0o600);
     return backupFile;
   }
 
