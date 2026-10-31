@@ -3,6 +3,10 @@ import { IExecutionRepository, defaultExecutionRepository } from '../repositorie
 import { IClock } from '../clock';
 import { authMiddleware } from './auth';
 import { createHeeRouter } from './routes/heeRouter';
+import { createHOSRouter } from './routes/hosRouter';
+import { IHOSRepositoryFactory, HOSSubjectScopedRepositoryFactory } from '../hos/repositoryFactory';
+import { HOSEventMeshBridge, defaultHOSEventMeshBridge } from '../hos/eventMesh';
+import { HOSEngineLifecycleRegistry, defaultHOSEngineLifecycleRegistry } from '../hos/lifecycle';
 import { ApiError, InternalError } from './errors';
 import { SecurityEngine } from './security';
 
@@ -10,6 +14,9 @@ export interface AppOptions {
   repository?: IExecutionRepository;
   clock?: IClock;
   validateSecurityConfig?: boolean;
+  hosRepositoryFactory?: IHOSRepositoryFactory;
+  hosEventMesh?: HOSEventMeshBridge;
+  hosLifecycle?: HOSEngineLifecycleRegistry;
 }
 
 export function createApp(options: AppOptions = {}): Express {
@@ -43,11 +50,19 @@ export function createApp(options: AppOptions = {}): Express {
     res.status(200).json({ status: 'ok', service: 'Execution OS Backend', timestamp: new Date().toISOString() });
   });
 
-  // 5. Versioned Execution OS (HEE) APIs
+  // 5. HumanKernelOS engine adapter
+  const hosRouter = createHOSRouter(
+    options.hosRepositoryFactory || new HOSSubjectScopedRepositoryFactory(),
+    options.hosEventMesh || defaultHOSEventMeshBridge,
+    options.hosLifecycle || defaultHOSEngineLifecycleRegistry
+  );
+  app.use('/api/v1/hos', hosRouter);
+
+  // 6. Versioned Execution OS legacy/internal APIs
   const heeRouter = createHeeRouter(repository, options.clock);
   app.use('/api/v1/hee', heeRouter);
 
-  // 6. Global Structured Error Handler (EOS-004 Error Contract)
+  // 7. Global Structured Error Handler (EOS-004 Error Contract)
   app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
     const requestId = req.requestId;
 
