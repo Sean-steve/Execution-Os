@@ -301,6 +301,62 @@ describe('HumanKernelOS E4-E6 Integration Certification', () => {
     expect(discipline.body.data.data.evidence).toBeDefined();
   });
 
+  it('E6: discipline score refuses to manufacture performance when no execution evidence exists', async () => {
+    const assertion = assertionFor('hos-empty-score-user');
+    const res = await request(app)
+      .post('/api/v1/hos/capabilities/discipline.score.get')
+      .set(headersFor(assertion))
+      .send({});
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.data.score).toBe(0);
+    expect(res.body.data.data.status).toBe('INSUFFICIENT_EVIDENCE');
+    expect(res.body.data.data.evidence.committedActivities).toBe(0);
+  });
+
+  it('E6: session and fallback capabilities cannot execute activities outside the active HOS delegation', async () => {
+    const assertion = assertionFor('hos-delegation-user');
+    const subject = contextFor(assertion);
+    const state = JSON.parse(JSON.stringify(LEGACY_STANDALONE_FIXTURE_STATE));
+    state.subjectId = subject.subjectId;
+    state.tenantId = subject.tenantId;
+    state.scheduleAuthority = {
+      mode: 'HOS',
+      authoritativePlan: {
+        planId: 'dop-delegation',
+        planVersion: '1',
+        subjectId: subject.subjectId,
+        localDate: '2026-10-31',
+        timezone: 'Africa/Nairobi',
+        source: 'HOS',
+        receivedAtUtc: new Date().toISOString(),
+        executionActivities: state.tasks.filter((task: any) => task.id === 'task-meditation'),
+        commitments: [],
+        delegatedWindows: [{
+          id: 'delegated-meditation',
+          startMinutes: 0,
+          endMinutes: 1440,
+          allowedActivityIds: ['task-meditation'],
+          canReallocate: true,
+          canCompress: true,
+          canDefer: true,
+        }],
+      },
+      lastAcceptedPlanId: 'dop-delegation',
+      lastAcceptedPlanVersion: '1',
+    };
+    await factory.seed(subject, state);
+
+    const denied = await request(app)
+      .post('/api/v1/hos/capabilities/session.start')
+      .set(headersFor(assertion))
+      .set('Idempotency-Key', 'outside-delegation-1')
+      .send({ activityInstanceId: 'task-deep-work-build' });
+
+    expect(denied.status).toBe(400);
+    expect(denied.body.message).toMatch(/not delegated by HOS plan/i);
+  });
+
   it('E6: Event Mesh delivery deduplicates repeated events', async () => {
     const assertion = assertionFor('hos-event-user');
     const subject = contextFor(assertion);
