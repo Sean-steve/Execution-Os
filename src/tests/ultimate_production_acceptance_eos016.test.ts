@@ -397,6 +397,9 @@ describe('Sprint 12: Full Execution OS Production Acceptance (EOS-000 through EO
           isTradingDay: true,
           marketAnalyzed: true,
           setupDetected: true,
+          strategyCriteriaMet: true,
+          riskLimitsSatisfied: true,
+          stopLossDefined: true,
           noSetupJustified: false,
         },
       };
