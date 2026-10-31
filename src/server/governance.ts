@@ -1,5 +1,4 @@
 import { AppState, RoutineTask, UserOverrideRecord } from '../types';
-import { PROTECTED_FAMILY_START, PROTECTED_FAMILY_END } from '../services/allocationEngine';
 import { checkTaskDependencies } from '../services/dependencyEngine';
 import {
   GovernanceDeniedError,
