@@ -6,3 +6,5 @@ for (const key of Object.keys(DEFAULT_APP_STATE as any)) {
   delete (DEFAULT_APP_STATE as any)[key];
 }
 Object.assign(DEFAULT_APP_STATE as any, fixture);
+
+(DEFAULT_APP_STATE as any).legacyStandaloneCompatibility = true;
