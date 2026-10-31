@@ -46,6 +46,9 @@ describe('Execution OS Final Production Truth Hardening & Certification Suite', 
     storageEngine = new FileCanonicalStorageEngine({ filePath: testDbPath });
     db = new CanonicalDatabase(storageEngine);
     repo = new ProductionExecutionRepository(db, 'user_test_owner');
+    // This legacy certification suite intentionally exercises standalone mode.
+    // Production bootstrap itself is separately certified as truth-clean by HOS E1 tests.
+    await repo.saveState(JSON.parse(JSON.stringify(DEFAULT_APP_STATE)));
     eventStore = new FileDurableEventStore(testEventsPath);
   });
 
