@@ -21,14 +21,11 @@ export const checkTaskDependencies = (
   const task = state.tasks.find(t => t.id === taskId);
   const activity = state.activities?.find(a => a.id === taskId);
   
-  if (!task && !activity) {
-    return { isBlocked: false, isSatisfied: true, blockingReasons: [], blockingTaskIds: [] };
-  }
-
   const blockingReasons: string[] = [];
   const blockingTaskIds: string[] = [];
 
-  // Domain-neutral boundary: external engines express policy as execution gates.
+  // Domain-neutral boundary: external engines may gate virtual targets that do
+  // not exist as local task definitions. Evaluate gates before local lookup exit.
   // Legacy standalone fixtures are translated by an isolated compatibility adapter.
   const gateState = (state as any).legacyStandaloneCompatibility
     ? applyLegacyTradingProtocolUpdate(state, {})
@@ -37,6 +34,10 @@ export const checkTaskDependencies = (
   if (externalGateCheck.isBlocked) {
     blockingReasons.push(...externalGateCheck.blockingReasons);
     blockingTaskIds.push(...externalGateCheck.gateIds.map(id => `external-gate:${id}`));
+  }
+
+  if (!task && !activity && blockingReasons.length === 0) {
+    return { isBlocked: false, isSatisfied: true, blockingReasons: [], blockingTaskIds: [] };
   }
 
   // Check defined dependencies
