@@ -61,9 +61,20 @@ export class SecurityEngine {
         return { valid: false, message: 'Secret key length is below 32 characters.' };
       }
       if (process.env.NODE_ENV === 'production') {
-        const bootstrapSecret = process.env.HEE_AUTH_BOOTSTRAP_SECRET;
-        if (!bootstrapSecret || bootstrapSecret.trim().length < 32) {
-          return { valid: false, message: 'HEE_AUTH_BOOTSTRAP_SECRET must be configured and be at least 32 characters in production mode.' };
+        const identityMode = process.env.EXECUTION_OS_IDENTITY_MODE === 'LEGACY_STANDALONE'
+          ? 'LEGACY_STANDALONE'
+          : 'HOS';
+
+        if (identityMode === 'LEGACY_STANDALONE') {
+          const bootstrapSecret = process.env.HEE_AUTH_BOOTSTRAP_SECRET;
+          if (!bootstrapSecret || bootstrapSecret.trim().length < 32) {
+            return { valid: false, message: 'HEE_AUTH_BOOTSTRAP_SECRET must be configured for production standalone identity mode.' };
+          }
+        } else {
+          const hosSecret = process.env.HOS_EXECUTION_SHARED_SECRET;
+          if (!hosSecret || hosSecret.trim().length < 32) {
+            return { valid: false, message: 'HOS_EXECUTION_SHARED_SECRET must be configured for production HOS identity mode.' };
+          }
         }
       }
       return { valid: true, message: 'Security secrets are valid and secure.' };
