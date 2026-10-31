@@ -196,6 +196,15 @@ export class HOSEventMeshBridge {
       .slice(0, 500);
   }
 
+  async listDeadLetters(subject?: HOSSubjectContext) {
+    const entries = await this.deadLetterQueue.list({ consumerName: 'hos-event-mesh' });
+    if (!subject) return entries;
+    return entries.filter(entry => {
+      const context = this.dlqContexts.get(entry.id);
+      return context?.subjectId === subject.subjectId && context?.tenantId === subject.tenantId;
+    });
+  }
+
   async retryDeadLetter(id: string): Promise<HOSEventDeliveryAudit> {
     const entry = await this.deadLetterQueue.getById(id);
     if (!entry || entry.consumerName !== 'hos-event-mesh') throw new Error(`HOS Event Mesh dead-letter ${id} not found.`);
