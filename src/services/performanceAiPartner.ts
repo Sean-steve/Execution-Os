@@ -147,7 +147,7 @@ export class PerformanceAiPartner {
       reply = await provider.generate({ system, user: message.trim(), mode: allowedMode });
     }
 
-    const asksForTime = /more time|extend|extension|another \d+\s*(min|minute)/i.test(message);
+    const asksForTime = /more\s+time|extend|extension|\b(?:another\s+)?\d+\s*(?:more\s+)?(?:min|mins|minute|minutes)\b/i.test(message);
     return {
       reply,
       mode: allowedMode,
