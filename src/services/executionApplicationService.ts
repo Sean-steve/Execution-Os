@@ -50,7 +50,9 @@ import {
   RedeemRewardCommand,
   SetHOSOperatingPlanCommand,
   ResolveScheduleProposalCommand,
-  UpsertExternalExecutionGateCommand
+  UpsertExternalExecutionGateCommand,
+  UpsertHOSHumanStateContextCommand,
+  ReceivePDIEExecutionRecommendationCommand
 } from '../commands/commands';
 
 /**
@@ -145,6 +147,12 @@ export class ExecutionApplicationService {
       case 'UpsertExternalExecutionGate':
         command = new UpsertExternalExecutionGateCommand(desc.payload);
         break;
+      case 'UpsertHOSHumanStateContext':
+        command = new UpsertHOSHumanStateContextCommand(desc.payload);
+        break;
+      case 'ReceivePDIEExecutionRecommendation':
+        command = new ReceivePDIEExecutionRecommendationCommand(desc.payload);
+        break;
       case 'CompleteActivity':
         command = new CompleteActivityCommand(desc.payload);
         break;
@@ -175,6 +183,14 @@ export class ExecutionApplicationService {
   async upsertExternalExecutionGate(gate: import('../types').ExternalExecutionGate, currentState?: AppState): Promise<CommandResult> {
     return this.dispatch(new UpsertExternalExecutionGateCommand({ gate }), currentState);
   }
+  async upsertHOSHumanStateContext(context: import('../types').HOSHumanStateExecutionContext, currentState?: AppState): Promise<CommandResult> {
+    return this.dispatch(new UpsertHOSHumanStateContextCommand({ context }), currentState);
+  }
+
+  async receivePDIEExecutionRecommendation(recommendation: import('../types').PDIEExecutionRecommendation, currentState?: AppState): Promise<CommandResult> {
+    return this.dispatch(new ReceivePDIEExecutionRecommendationCommand({ recommendation }), currentState);
+  }
+
 
   async planTomorrow(plan: Partial<TomorrowPlan>, currentState?: AppState): Promise<CommandResult> {
     return this.dispatch(new PlanTomorrowCommand({ plan }), currentState);

@@ -3,6 +3,7 @@ import { SystemEvent } from '../types';
 import { IDeadLetterQueue, defaultDeadLetterQueue } from '../services/deadLetterQueue';
 import { HOSSubjectContext } from './identityBridge';
 import { IHOSBoundaryStore, MemoryHOSBoundaryStore, defaultHOSBoundaryStore } from './boundaryStore';
+import { projectExecutionBehavioralSignal } from './humanStateDecisionBridge';
 
 export interface HOSEventEnvelope {
   id: string;
@@ -100,6 +101,28 @@ export function mapExecutionEventToHOS(event: SystemEvent, subject: HOSSubjectCo
   };
 }
 
+export function mapExecutionBehaviorToHOS(event: SystemEvent, subject: HOSSubjectContext): HOSEventEnvelope | null {
+  const signal = projectExecutionBehavioralSignal(event);
+  if (!signal) return null;
+  return {
+    id: signal.id,
+    type: 'execution.behavior.signal',
+    version: '1.0',
+    occurredAt: signal.occurredAtUtc,
+    source: 'execution-os',
+    subjectId: subject.subjectId,
+    tenantId: subject.tenantId,
+    correlationId: event.correlation_id,
+    causationId: event.event_id,
+    data: {
+      signalType: signal.type,
+      sourceEventId: signal.sourceEventId,
+      evidence: signal.evidence,
+      provenance: signal.provenance,
+    },
+  };
+}
+
 export class HOSEventMeshBridge {
   constructor(
     private transport: IHOSEventMeshTransport = new HttpHOSEventMeshTransport(),
@@ -112,15 +135,16 @@ export class HOSEventMeshBridge {
     return `${subject.tenantId}::${subject.subjectId}::${eventId}`;
   }
 
-  async publish(event: SystemEvent, subject: HOSSubjectContext): Promise<HOSEventDeliveryAudit | null> {
-    const mapped = mapExecutionEventToHOS(event, subject);
-    if (!mapped) return null;
-
-    const key = this.key(subject, event.event_id);
+  private async deliverEnvelope(
+    event: SystemEvent,
+    envelope: HOSEventEnvelope,
+    subject: HOSSubjectContext
+  ): Promise<HOSEventDeliveryAudit> {
+    const key = this.key(subject, envelope.id);
     if (this.boundaryStore.hasProcessedEvent(key)) {
       const record: HOSEventDeliveryAudit = {
-        eventId: event.event_id,
-        hosEventType: mapped.type,
+        eventId: envelope.id,
+        hosEventType: envelope.type,
         subjectId: subject.subjectId,
         tenantId: subject.tenantId,
         status: 'SKIPPED_DUPLICATE',
@@ -136,11 +160,11 @@ export class HOSEventMeshBridge {
     while (attempts <= this.maxRetries) {
       attempts += 1;
       try {
-        await this.transport.publish(mapped);
+        await this.transport.publish(envelope);
         this.boundaryStore.markProcessedEvent(key);
         const record: HOSEventDeliveryAudit = {
-          eventId: event.event_id,
-          hosEventType: mapped.type,
+          eventId: envelope.id,
+          hosEventType: envelope.type,
           subjectId: subject.subjectId,
           tenantId: subject.tenantId,
           status: 'DELIVERED',
@@ -157,17 +181,26 @@ export class HOSEventMeshBridge {
       }
     }
 
+    const eventForRetry: SystemEvent = {
+      ...event,
+      metadata: {
+        ...event.metadata,
+        hos_retry_envelope_id: envelope.id,
+        hos_retry_envelope_type: envelope.type,
+      },
+    };
     const entry = await this.deadLetterQueue.enqueue({
-      event,
+      event: eventForRetry,
       consumerName: 'hos-event-mesh',
       errorMessage: lastError?.message || 'HOS Event Mesh delivery failed',
       errorStack: lastError?.stack,
       attempts,
     });
     this.boundaryStore.setDLQSubject(entry.id, subject);
+
     const record: HOSEventDeliveryAudit = {
-      eventId: event.event_id,
-      hosEventType: mapped.type,
+      eventId: envelope.id,
+      hosEventType: envelope.type,
       subjectId: subject.subjectId,
       tenantId: subject.tenantId,
       status: 'FAILED_DEAD_LETTERED',
@@ -177,6 +210,22 @@ export class HOSEventMeshBridge {
     };
     this.boundaryStore.addEventAudit(record);
     return record;
+  }
+
+  async publish(event: SystemEvent, subject: HOSSubjectContext): Promise<HOSEventDeliveryAudit | null> {
+    const operational = mapExecutionEventToHOS(event, subject);
+    const behavioral = mapExecutionBehaviorToHOS(event, subject);
+    const envelopes = [operational, behavioral].filter((item): item is HOSEventEnvelope => Boolean(item));
+    if (!envelopes.length) return null;
+
+    const results: HOSEventDeliveryAudit[] = [];
+    for (const envelope of envelopes) {
+      const result = await this.deliverEnvelope(event, envelope, subject);
+      results.push(result);
+      if (result.status === 'FAILED_DEAD_LETTERED') return result;
+    }
+
+    return results[0] || null;
   }
 
   async publishBatch(events: SystemEvent[], subject: HOSSubjectContext): Promise<HOSEventDeliveryAudit[]> {

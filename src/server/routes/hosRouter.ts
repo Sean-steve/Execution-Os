@@ -171,6 +171,31 @@ export function createHOSRouter(
         HOSIdentityBridge.requirePermission(subject, 'execution.gate.write');
         HOSIdentityBridge.requireConsent(subject, 'execution.control');
         result = await app.execute({ type: 'UpsertExternalExecutionGate', payload: { gate: payload.gate } }, state);
+      } else if (type === 'hos.human_state.updated') {
+        HOSIdentityBridge.requirePermission(subject, 'execution.context.write');
+        HOSIdentityBridge.requireConsent(subject, 'execution.human_state');
+        const context = payload?.context;
+        if (!context || context.subjectId !== subject.subjectId) {
+          throw new ValidationError('Human State execution context must exist and match the authenticated HOS subject.');
+        }
+        if ('hsv' in context || 'personalPolicy' in context || 'personal_policy' in context) {
+          throw new ValidationError('Execution OS accepts only the minimum-necessary Human State execution projection; HSV and Personal Policy payloads are prohibited.');
+        }
+        result = await app.execute({ type: 'UpsertHOSHumanStateContext', payload: { context } }, state);
+      } else if (type === 'hos.pdie.recommendation.created') {
+        HOSIdentityBridge.requirePermission(subject, 'execution.adaptation.recommend');
+        HOSIdentityBridge.requireConsent(subject, 'execution.adaptation');
+        const recommendation = payload?.recommendation;
+        if (!recommendation || recommendation.subjectId !== subject.subjectId) {
+          throw new ValidationError('PDIE recommendation must exist and match the authenticated HOS subject.');
+        }
+        if (recommendation.personalPolicyMutation || recommendation.hsvMutation) {
+          throw new ValidationError('PDIE may recommend bounded execution adaptation only; HSV or Personal Policy mutation is prohibited.');
+        }
+        result = await app.execute({
+          type: 'ReceivePDIEExecutionRecommendation',
+          payload: { recommendation },
+        }, state);
       } else {
         throw new ValidationError(`Unsupported HOS signal type "${type}".`);
       }
@@ -186,6 +211,8 @@ export function createHOSRouter(
           scheduleAuthority: result.state.scheduleAuthority,
           scheduleProposals: result.state.scheduleProposals || [],
           externalExecutionGates: result.state.externalExecutionGates || [],
+          humanStateContext: result.state.hosHumanStateContext || null,
+          pdieExecutionRecommendations: result.state.pdieExecutionRecommendations || [],
         },
         events: result.events || [],
       };

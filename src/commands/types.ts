@@ -296,3 +296,11 @@ export interface ResolveScheduleProposalPayload {
 export interface UpsertExternalExecutionGatePayload {
   gate: import('../types').ExternalExecutionGate;
 }
+
+export interface UpsertHOSHumanStateContextPayload {
+  context: import('../types').HOSHumanStateExecutionContext;
+}
+
+export interface ReceivePDIEExecutionRecommendationPayload {
+  recommendation: import('../types').PDIEExecutionRecommendation;
+}

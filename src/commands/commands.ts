@@ -48,7 +48,9 @@ import {
   RedeemRewardPayload,
   SetHOSOperatingPlanPayload,
   ResolveScheduleProposalPayload,
-  UpsertExternalExecutionGatePayload
+  UpsertExternalExecutionGatePayload,
+  UpsertHOSHumanStateContextPayload,
+  ReceivePDIEExecutionRecommendationPayload
 } from './types';
 import { AppState } from '../types';
 
@@ -663,6 +665,39 @@ export class UpsertExternalExecutionGateCommand implements ICommand {
     const gate = this.payload?.gate;
     if (!gate?.id || !gate?.sourceEngine || !gate?.targetActivityId || !gate?.status) {
       return { valid: false, error: 'External gate requires id, sourceEngine, targetActivityId and status.' };
+    }
+    return { valid: true };
+  }
+}
+
+
+export class UpsertHOSHumanStateContextCommand implements ICommand {
+  readonly type = 'UpsertHOSHumanStateContext';
+  constructor(public payload: UpsertHOSHumanStateContextPayload) {}
+
+  validate(state: AppState) {
+    const context = this.payload?.context;
+    if (!context?.contextId || !context?.subjectId || context.source !== 'HumanKernelOS' || !context?.sourceRef || !context?.observedAtUtc) {
+      return { valid: false, error: 'Valid HumanKernelOS Human State execution context is required.' };
+    }
+    if (state.subjectId && state.subjectId !== context.subjectId) {
+      return { valid: false, error: 'Human State context subject does not match execution subject.' };
+    }
+    return { valid: true };
+  }
+}
+
+export class ReceivePDIEExecutionRecommendationCommand implements ICommand {
+  readonly type = 'ReceivePDIEExecutionRecommendation';
+  constructor(public payload: ReceivePDIEExecutionRecommendationPayload) {}
+
+  validate(state: AppState) {
+    const recommendation = this.payload?.recommendation;
+    if (!recommendation?.id || !recommendation?.subjectId || recommendation.source !== 'PDIE' || !recommendation?.type || !recommendation?.issuedAtUtc) {
+      return { valid: false, error: 'Valid PDIE execution recommendation is required.' };
+    }
+    if (state.subjectId && state.subjectId !== recommendation.subjectId) {
+      return { valid: false, error: 'PDIE recommendation subject does not match execution subject.' };
     }
     return { valid: true };
   }

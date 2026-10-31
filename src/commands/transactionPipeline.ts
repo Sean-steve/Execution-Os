@@ -50,7 +50,9 @@ import {
   RedeemRewardCommand,
   SetHOSOperatingPlanCommand,
   ResolveScheduleProposalCommand,
-  UpsertExternalExecutionGateCommand
+  UpsertExternalExecutionGateCommand,
+  UpsertHOSHumanStateContextCommand,
+  ReceivePDIEExecutionRecommendationCommand
 } from './commands';
 import { HumanPerformanceEngine } from '../services/performanceEngine';
 import { evaluateRoutineState } from '../services/routineEngine';
@@ -79,6 +81,7 @@ import { upsertDailyPerformanceRecord, reconcileWeeklyPerformance, generateWeekl
 import { reconcileAllocationPlanWithAuthority, requestSingleActivityScheduleChange, acceptHOSDailyOperatingPlan, resolveHOSScheduleProposal } from '../services/scheduleAuthority';
 import { applyLegacyTradingProtocolUpdate } from '../adapters/legacyTradingCompatibilityAdapter';
 import { upsertExternalExecutionGate } from '../services/externalExecutionGate';
+import { acceptHOSHumanStateContext, acceptPDIEExecutionRecommendation, projectExecutionBehavioralSignal, recordBehavioralSignal } from '../hos/humanStateDecisionBridge';
 
 /**
  * TransactionPipeline / Command Bus:
@@ -180,6 +183,56 @@ export class TransactionPipeline {
           command.payload.gate,
           state,
           'SYSTEM_KERNEL',
+          undefined,
+          clock
+        ));
+      } else if (command instanceof UpsertHOSHumanStateContextCommand) {
+        state = acceptHOSHumanStateContext(state, command.payload.context);
+        createdEvents.push(createSystemEvent(
+          'HOSHumanStateContextUpdated',
+          command.payload.context.contextId,
+          {
+            contextId: command.payload.context.contextId,
+            subjectId: command.payload.context.subjectId,
+            sourceRef: command.payload.context.sourceRef,
+            observedAtUtc: command.payload.context.observedAtUtc,
+            validUntilUtc: command.payload.context.validUntilUtc,
+            confidence: command.payload.context.confidence,
+          },
+          state,
+          'SYSTEM_KERNEL',
+          undefined,
+          clock
+        ));
+      } else if (command instanceof ReceivePDIEExecutionRecommendationCommand) {
+        state = acceptPDIEExecutionRecommendation(state, command.payload.recommendation);
+        createdEvents.push(createSystemEvent(
+          'PDIERecommendationReceived',
+          command.payload.recommendation.id,
+          {
+            recommendationId: command.payload.recommendation.id,
+            subjectId: command.payload.recommendation.subjectId,
+            type: command.payload.recommendation.type,
+            confidence: command.payload.recommendation.confidence,
+            evidenceRefs: command.payload.recommendation.evidenceRefs,
+            expiresAtUtc: command.payload.recommendation.expiresAtUtc,
+          },
+          state,
+          'SYSTEM_KERNEL',
+          undefined,
+          clock
+        ));
+        createdEvents.push(createSystemEvent(
+          'PDIERecommendationProjected',
+          command.payload.recommendation.id,
+          {
+            recommendationId: command.payload.recommendation.id,
+            projection: 'EXECUTION_ADVISORY_CONTEXT',
+            policyMutation: false,
+            hsvMutation: false,
+          },
+          state,
+          'GOVERNANCE_GUARD',
           undefined,
           clock
         ));
@@ -974,6 +1027,10 @@ export class TransactionPipeline {
     // 5. EVENT CREATION & PERSISTENCE STAGE
     if (createdEvents.length > 0) {
       state.events = [...createdEvents, ...(state.events || [])].slice(0, 200);
+      for (const event of createdEvents) {
+        const behavioralSignal = projectExecutionBehavioralSignal(event, state);
+        if (behavioralSignal) state = recordBehavioralSignal(state, behavioralSignal);
+      }
       try {
         await defaultDurableEventStore.appendBatch(createdEvents);
         await defaultEventDispatcher.dispatchBatch(createdEvents);

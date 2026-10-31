@@ -3,6 +3,7 @@ import { getCurrentTimeMinutes } from './storageService';
 import { checkTaskDependencies } from './dependencyEngine';
 import { getFallbackPolicyForTask, selectOptimalFallbackTier } from './fallbackEngine';
 import { getWeeklyPerformanceFitModifier } from './weeklyPerformanceIntelligence';
+import { getHumanStateExecutionFitModifier } from '../hos/humanStateDecisionBridge';
 import { calculateDynamicAllocations as calculateLegacyDynamicAllocations } from '../adapters/legacyStandaloneAllocationEngine';
 import {
   getAuthoritativeProtectedCommitments,
@@ -47,8 +48,8 @@ export const calculateDynamicAllocations = (state: AppState): AllocationResult =
       if (Math.abs(nominalDiff) > 60 || a.isProtected || b.isProtected || a.isNonNegotiable || b.isNonNegotiable) {
         return nominalDiff;
       }
-      const aFit = getWeeklyPerformanceFitModifier(state, a);
-      const bFit = getWeeklyPerformanceFitModifier(state, b);
+      const aFit = getWeeklyPerformanceFitModifier(state, a) + getHumanStateExecutionFitModifier(state, a);
+      const bFit = getWeeklyPerformanceFitModifier(state, b) + getHumanStateExecutionFitModifier(state, b);
       return (a.startMinutes - aFit * 2) - (b.startMinutes - bFit * 2);
     });
 
@@ -142,10 +143,15 @@ export const calculateDynamicAllocations = (state: AppState): AllocationResult =
     const targetEnd = Math.min(1440, targetStart + duration);
     if (targetEnd <= targetStart) feasible = false;
 
-    const fit = getWeeklyPerformanceFitModifier(state, task);
-    if (fit) {
-      const sign = fit > 0 ? '+' : '';
-      reason += ` Weekly performance fit ${sign}${fit} is advisory only.`;
+    const weeklyFit = getWeeklyPerformanceFitModifier(state, task);
+    if (weeklyFit) {
+      const sign = weeklyFit > 0 ? '+' : '';
+      reason += ` Weekly performance fit ${sign}${weeklyFit} is advisory only.`;
+    }
+    const humanStateFit = getHumanStateExecutionFitModifier(state, task);
+    if (humanStateFit) {
+      const sign = humanStateFit > 0 ? '+' : '';
+      reason += ` HOS Human State/PDIE fit ${sign}${humanStateFit} is advisory only.`;
     }
 
     allocations.push({
