@@ -204,7 +204,10 @@ export type AdaptationPatternType =
   | 'ALTERNATIVE_WINDOW_SUCCESS';
 
 export type TaskExecutionStatus = 
-  | 'ON_TIME' 
+  | 'ON_TIME'
+  | 'COMPLETED'
+  | 'PARTIAL'
+  | 'PENDING'
   | 'MISSED_LATE' 
   | 'COMPLETED_WITH_OVERRUN' 
   | 'DEGRADED_FALLBACK' 
