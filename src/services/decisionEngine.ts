@@ -2,7 +2,7 @@ import { AppState, RoutineTask, FallbackTier } from '../types';
 import { getCurrentTimeMinutes, formatMinutesToTime } from './storageService';
 import { checkTaskDependencies } from './dependencyEngine';
 import { getTaskFallbackTiers } from './fallbackEngine';
-import { calculateDynamicAllocations, PROTECTED_FAMILY_START } from './allocationEngine';
+import { calculateDynamicAllocations } from './allocationEngine';
 
 export interface AutonomousDecisionResult {
   currentTask: RoutineTask | null;
@@ -26,20 +26,16 @@ export const getAutonomousNextDecision = (state: AppState): AutonomousDecisionRe
   const currentMinutes = getCurrentTimeMinutes(state);
   const mode = state.currentMode;
   const tasks = state.tasks.filter(t => t.modesAllowed.includes(mode));
-  
-  // Calculate dynamic allocations to see adjusted windows
   const { allocations } = calculateDynamicAllocations(state);
-
-  // 1. Check for active uncompleted tasks
   const uncompletedTasks = tasks.filter(t => !t.completed);
 
   if (uncompletedTasks.length === 0) {
     return {
       currentTask: null,
-      decisionReason: 'All scheduled non-negotiable and flexible anchors for today are complete. Rest and protect sleep.',
-      phaseTitle: 'Day Complete & Ready for Rest',
-      phaseDesc: 'All anchors satisfied with sovereign precision. Protect deep recovery.',
-      timeRemainingStr: 'Victory Complete',
+      decisionReason: 'All currently authorized execution items are complete.',
+      phaseTitle: 'Execution Complete',
+      phaseDesc: 'No further authorized activity is currently pending.',
+      timeRemainingStr: '',
       isUrgent: false,
       upcomingTask: null,
       availableFallbackTiers: [],
@@ -49,132 +45,63 @@ export const getAutonomousNextDecision = (state: AppState): AutonomousDecisionRe
     };
   }
 
-  // Find task whose allocated window covers current time
-  let activeAllocation = allocations.find(
-    a => !state.tasks.find(t => t.id === a.activityId)?.completed &&
-         currentMinutes >= a.allocatedStartMinutes && 
-         currentMinutes <= a.allocatedEndMinutes
+  const activeAllocation = allocations.find(a =>
+    !state.tasks.find(t => t.id === a.activityId)?.completed &&
+    currentMinutes >= a.allocatedStartMinutes &&
+    currentMinutes < a.allocatedEndMinutes
   );
 
-  // If no task is allocated right at this minute, pick the first uncompleted task
-  if (!activeAllocation) {
-    activeAllocation = allocations.find(
-      a => !state.tasks.find(t => t.id === a.activityId)?.completed
-    );
-  }
+  const nextAllocation = activeAllocation || allocations
+    .filter(a => !state.tasks.find(t => t.id === a.activityId)?.completed)
+    .sort((a, b) => a.allocatedStartMinutes - b.allocatedStartMinutes)[0];
 
-  let selectedTask: RoutineTask | null = null;
-  if (activeAllocation) {
-    selectedTask = tasks.find(t => t.id === activeAllocation!.activityId) || null;
-  }
+  const selectedTask =
+    (nextAllocation ? tasks.find(t => t.id === nextAllocation.activityId) : undefined) ||
+    uncompletedTasks[0];
 
-  if (!selectedTask) {
-    selectedTask = uncompletedTasks[0];
-  }
-
-  // Dependency evaluation
   const depCheck = checkTaskDependencies(state, selectedTask.id);
-  let dependencyBlockReason = '';
-  if (depCheck.isBlocked) {
-    dependencyBlockReason = depCheck.blockingReasons[0] || 'Prerequisite tasks required first.';
-  }
+  const dependencyBlockReason = depCheck.isBlocked
+    ? depCheck.blockingReasons[0] || 'A prerequisite is not satisfied.'
+    : '';
 
-  // Fallback tiers
   const availableFallbackTiers = getTaskFallbackTiers(state, selectedTask.id);
+  const definition = state.activities.find(a => a.id === selectedTask.id);
+  const isProtected = Boolean(selectedTask.isProtected || definition?.isProtectedCommitment);
+  const effectiveStart = nextAllocation?.allocatedStartMinutes ?? selectedTask.allocatedStartMinutes ?? selectedTask.startMinutes;
+  const effectiveEnd = nextAllocation?.allocatedEndMinutes ?? selectedTask.allocatedEndMinutes ?? selectedTask.endMinutes;
+  const minutesUntilStart = Math.max(0, effectiveStart - currentMinutes);
+  const minutesRemaining = Math.max(0, effectiveEnd - currentMinutes);
 
-  // Synthesize concise contextual decision explanation
-  let decisionReason = '';
-  const isFamilyWindowSoon = currentMinutes >= 900 && currentMinutes < PROTECTED_FAMILY_START;
-  const timeUntilFamily = Math.max(0, PROTECTED_FAMILY_START - currentMinutes);
-
-  if (selectedTask.id === 'task-awaken') {
-    decisionReason = 'Begin the day with sovereign identity reset before digital inputs enter your mind.';
-  } else if (selectedTask.id === 'task-outside-light' || selectedTask.id === 'task-workout-morning') {
-    decisionReason = 'Physical priming unlocks cognitive peak for Deep Work Build. Execute now.';
-  } else if (selectedTask.id === 'task-command-center') {
-    decisionReason = 'Lock Daily Definition of Victory to orient all subsequent builder blocks.';
-  } else if (selectedTask.id === 'task-deep-work-build') {
-    if (isFamilyWindowSoon) {
-      decisionReason = `Engage sprint now: ${timeUntilFamily}m remaining before protected 4:00 PM family presence block.`;
-    } else {
-      decisionReason = 'Command Center parameters locked. This is your primary high-leverage builder block.';
-    }
-  } else if (selectedTask.id === 'task-trading-protocol') {
-    if (state.tradingProtocol.marketAnalyzed && (!state.tradingProtocol.setupDetected || state.tradingProtocol.noSetupJustified)) {
-      decisionReason = 'No Setup = No Trade rule satisfied. Terminal closed; focus shifted entirely to core asset building.';
-    } else {
-      decisionReason = 'Execute objective pre-market analysis with strict risk validation before taking any trade.';
-    }
-  } else if (
-    selectedTask.id === 'task-family-life' || 
-    selectedTask.id === 'task-family-connection' || 
-    selectedTask.id === 'task-dinner-family' ||
-    selectedTask.anchorId === 'ANCHOR_8_HUMAN_LIFE' || 
-    selectedTask.anchorId === 'ANCHOR_9_CONNECT'
-  ) {
-    decisionReason = 'Family presence is a protected high-governance anchor. Phone away, full unhurried attention.';
-  } else if (selectedTask.id === 'task-evening-review' || selectedTask.id === 'task-daily-analysis') {
-    decisionReason = 'Score the 7 Pillars, evaluate Daily Victory, and lock tomorrow blueprint for a clear mind.';
+  let decisionReason: string;
+  if (depCheck.isBlocked) {
+    decisionReason = `Execution is blocked until prerequisite conditions are satisfied: ${dependencyBlockReason}`;
+  } else if (isProtected) {
+    decisionReason = 'This is a protected commitment from the authoritative execution plan.';
+  } else if (selectedTask.isNonNegotiable) {
+    decisionReason = 'This is the highest-priority currently feasible committed activity.';
+  } else if ((selectedTask.fallbackLevel || 0) > 0) {
+    decisionReason = `Execute the authorized fallback path (tier ${selectedTask.fallbackLevel}) for this activity.`;
+  } else if (activeAllocation) {
+    decisionReason = 'This activity is currently authorized and active in the effective execution window.';
   } else {
-    decisionReason = `Highest-priority available action in the current ${mode} execution window.`;
+    decisionReason = 'This is the next feasible authorized activity in the current execution plan.';
   }
 
-  // Compute upcoming task
-  const upcomingTask = tasks.find(
-    t => t.id !== selectedTask?.id && !t.completed && t.startMinutes >= (selectedTask?.endMinutes || 0)
-  ) || null;
+  const upcomingTask = allocations
+    .filter(a => a.activityId !== selectedTask.id && a.allocatedStartMinutes >= effectiveEnd)
+    .sort((a, b) => a.allocatedStartMinutes - b.allocatedStartMinutes)
+    .map(a => tasks.find(t => t.id === a.activityId))
+    .find((t): t is RoutineTask => Boolean(t && !t.completed)) || null;
 
-  // Phase Title & Descriptions
-  let phaseTitle = 'Active Execution Phase';
-  let phaseDesc = selectedTask.subtext || selectedTask.title;
-  let timeRemainingStr = '';
-  let isUrgent = false;
-
-  if (currentMinutes < 330) {
-    phaseTitle = 'Pre-Dawn Sleep Phase';
-    phaseDesc = 'Rest deep. Your 5:30 AM Awaken Anchor is approaching.';
-    timeRemainingStr = `${330 - currentMinutes}m until 5:30 AM`;
-  } else if (currentMinutes < 410) {
-    phaseTitle = 'Morning Prime & Awakening';
-    phaseDesc = 'Identity, Light, Movement, Shower, Meditation. Build physiological readiness.';
-    timeRemainingStr = `${410 - currentMinutes}m in Morning Prime`;
-  } else if (currentMinutes < 465) {
-    phaseTitle = 'Command Center & Fuel';
-    phaseDesc = 'Define victory for 10 PM. Fuel without screen distraction.';
-    timeRemainingStr = `${465 - currentMinutes}m left in Briefing`;
-  } else if (currentMinutes < 630) {
-    phaseTitle = 'Deep Work Battlefield (BUILD)';
-    phaseDesc = 'Primary mission. Phone away. Website blockers active. Zero distraction leaks.';
-    timeRemainingStr = `${630 - currentMinutes}m in Deep Work`;
-    isUrgent = true;
-  } else if (currentMinutes < 720) {
-    phaseTitle = 'Operational Buffer & Errands';
-    phaseDesc = 'Flexible operations, meetings, follow-ups, or departure transition.';
-    timeRemainingStr = `${720 - currentMinutes}m in Buffer`;
-  } else if (currentMinutes < 960) {
-    phaseTitle = 'Production & Company Focus';
-    phaseDesc = 'Target single designated venture. Complete discrete micro-actions.';
-    timeRemainingStr = `${960 - currentMinutes}m in Production`;
-  } else if (currentMinutes < 1170) {
-    phaseTitle = 'Human Life & Family Connection (LIVE)';
-    phaseDesc = 'Movement, unhurried presence, scenic outing. Outcome: Family connected.';
-    timeRemainingStr = `${1170 - currentMinutes}m in Family Block`;
-  } else if (currentMinutes < 1260) {
-    phaseTitle = 'Daily Review & Tomorrow Blueprint';
-    phaseDesc = 'Score 7 Pillars, answer 6 reflection questions, plan tomorrow blueprint.';
-    timeRemainingStr = `${1260 - currentMinutes}m in Review`;
-    isUrgent = true;
-  } else {
-    phaseTitle = 'Wind Down & Final Rest';
-    phaseDesc = 'Allowed entertainment, reading, dark room, sleep deeply.';
-  }
-
-  const isProtected = 
-    selectedTask.id === 'task-family-life' || 
-    selectedTask.id === 'task-family-connection' || 
-    selectedTask.id === 'task-dinner-family' ||
-    selectedTask.anchorId === 'ANCHOR_8_HUMAN_LIFE' || 
-    selectedTask.anchorId === 'ANCHOR_9_CONNECT';
+  const phaseTitle = selectedTask.title;
+  const phaseDesc = selectedTask.subtext || 'Execute according to the current activity protocol.';
+  const timeRemainingStr = currentMinutes < effectiveStart
+    ? `${minutesUntilStart}m until authorized window`
+    : `${minutesRemaining}m remaining in effective window`;
+  const isUrgent = !depCheck.isBlocked && (
+    selectedTask.isNonNegotiable ||
+    (currentMinutes >= effectiveStart && minutesRemaining <= 15)
+  );
 
   return {
     currentTask: selectedTask,
