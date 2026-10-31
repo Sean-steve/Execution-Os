@@ -85,7 +85,7 @@ export const HOS_ENGINE_MANIFEST: HOSEngineManifest = {
   engineId: 'execution-os',
   displayName: 'Execution OS',
   contractVersion: '1.0.0',
-  engineVersion: 'E6',
+  engineVersion: 'E7',
   identityAuthority: 'HumanKernelOS',
   scheduleAuthority: 'HumanKernelOS',
   capabilities: HOS_ENGINE_CAPABILITIES,
@@ -93,6 +93,8 @@ export const HOS_ENGINE_MANIFEST: HOSEngineManifest = {
     'hos.daily_operating_plan.updated',
     'hos.schedule_proposal.resolved',
     'hos.external_execution_gate.updated',
+    'hos.human_state.updated',
+    'hos.pdie.recommendation.created',
   ],
   publishesEvents: [
     'execution.activity.started',
@@ -105,6 +107,7 @@ export const HOS_ENGINE_MANIFEST: HOSEngineManifest = {
     'execution.schedule.proposal.accepted',
     'execution.schedule.proposal.rejected',
     'execution.decision.requested',
+    'execution.behavior.signal',
   ],
   lifecycle: {
     healthPath: '/api/v1/hos/health',
