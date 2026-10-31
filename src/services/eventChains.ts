@@ -457,7 +457,7 @@ export class ExecutionEventChainService {
         causationId: evt1.event_id,
         engine: 'GovernanceEngine',
         policy: 'HumanAutonomyAndOverrideGovernancePolicy',
-        rationale: 'Governance evaluated override against Protected Family block (16:00-19:30). Request is within afternoon work block and does not violate family sanctuary.',
+        rationale: 'Governance evaluated the override against authoritative protected commitments and confirmed the requested execution window remains within permitted boundaries.',
         stateDiff: {
           overrideAllowed: { before: false, after: true },
         },
