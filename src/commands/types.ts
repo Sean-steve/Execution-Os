@@ -278,3 +278,7 @@ export interface CancelPerformanceSessionPayload {
   reason: string;
 }
 
+
+export interface RedeemRewardPayload {
+  rewardId: string;
+}
