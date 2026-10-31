@@ -56,9 +56,10 @@ export const TomorrowPlannerView: React.FC<TomorrowPlannerViewProps> = ({
   onExecuteCommand,
 }) => {
   // Plan form state initialized from state.tomorrowPlan
+  const legacyStandaloneCompatibility = Boolean((state as any).legacyStandaloneCompatibility);
   const [wakeTime, setWakeTime] = useState(state.tomorrowPlan.desiredWakeTime || '05:30');
   const [definitionOfVictory, setDefinitionOfVictory] = useState(
-    state.tomorrowPlan.definitionOfVictory || 'Ship core architecture & protect 4:00 PM family time'
+    state.tomorrowPlan.definitionOfVictory || ''
   );
   const [top1, setTop1] = useState(state.tomorrowPlan.top3?.[0] || '');
   const [top2, setTop2] = useState(state.tomorrowPlan.top3?.[1] || '');
@@ -77,7 +78,7 @@ export const TomorrowPlannerView: React.FC<TomorrowPlannerViewProps> = ({
     state.tomorrowPlan.departureTravelConstraints?.travelBufferMinutes || 30
   );
   const [departureDestination, setDepartureDestination] = useState(
-    state.tomorrowPlan.departureTravelConstraints?.destination || 'Downtown Office'
+    state.tomorrowPlan.departureTravelConstraints?.destination || ''
   );
 
   const [desiredActivities, setDesiredActivities] = useState<TomorrowDesiredActivity[]>(
@@ -88,29 +89,29 @@ export const TomorrowPlannerView: React.FC<TomorrowPlannerViewProps> = ({
   );
 
   const [companyName, setCompanyName] = useState(
-    state.tomorrowPlan.companyPriorities?.companyName || state.companyOfTheDay.companyName || 'NFlake Revenue Engine'
+    state.tomorrowPlan.companyPriorities?.companyName || state.companyOfTheDay.companyName || ''
   );
   const [companyObjective, setCompanyObjective] = useState(
-    state.tomorrowPlan.companyPriorities?.objective || state.companyOfTheDay.objective || 'Complete 3 outreach actions'
+    state.tomorrowPlan.companyPriorities?.objective || state.companyOfTheDay.objective || ''
   );
   const [companyAction1, setCompanyAction1] = useState(
-    state.tomorrowPlan.companyPriorities?.actions?.[0] || 'Contact 10 targeted enterprise prospects'
+    state.tomorrowPlan.companyPriorities?.actions?.[0] || ''
   );
   const [companyAction2, setCompanyAction2] = useState(
-    state.tomorrowPlan.companyPriorities?.actions?.[1] || 'Follow up with 5 active pipeline leads'
+    state.tomorrowPlan.companyPriorities?.actions?.[1] || ''
   );
   const [companyAction3, setCompanyAction3] = useState(
-    state.tomorrowPlan.companyPriorities?.actions?.[2] || 'Deliver 2 customized proposals'
+    state.tomorrowPlan.companyPriorities?.actions?.[2] || ''
   );
 
   const [familyActivity, setFamilyActivity] = useState(
-    state.tomorrowPlan.familyCommitments?.activity || state.tomorrowPlan.familyActivity || 'Sunset park walk & unhurried dinner'
+    state.tomorrowPlan.familyCommitments?.activity || state.tomorrowPlan.familyActivity || ''
   );
   const [isTradingDay, setIsTradingDay] = useState(
-    state.tomorrowPlan.tradingIntention?.isTradingDay ?? true
+    state.tomorrowPlan.tradingIntention?.isTradingDay ?? false
   );
   const [tradingFocus, setTradingFocus] = useState(
-    state.tomorrowPlan.tradingIntention?.setupFocus || 'A+ Liquidity sweep setup in London/NY Open'
+    state.tomorrowPlan.tradingIntention?.setupFocus || ''
   );
 
   const [desiredRoutine, setDesiredRoutine] = useState<TomorrowDesiredRoutine>(
@@ -156,35 +157,39 @@ export const TomorrowPlannerView: React.FC<TomorrowPlannerViewProps> = ({
       },
       desiredActivities,
       deadlines,
-      companyPriorities: {
-        companyName,
-        objective: companyObjective,
-        actions: [companyAction1, companyAction2, companyAction3].filter(Boolean),
-      },
-      familyCommitments: {
-        activity: familyActivity,
-        startMinutes: 960,
-        endMinutes: 1170,
-        isProtected: true,
-      },
-      protectedCommitments: [
-        { id: 'commit-family', title: 'Protected Family Block', startMinutes: 960, endMinutes: 1170, isStrict: true },
-        { id: 'commit-night', title: 'Sleep Rest Block', startMinutes: 1320, endMinutes: 1440, isStrict: true },
-      ],
-      tradingIntention: {
-        isTradingDay,
-        setupFocus: tradingFocus,
-        requirePrepCheck: true,
-      },
+      companyPriorities: companyName || companyObjective || companyAction1 || companyAction2 || companyAction3
+        ? {
+            companyName,
+            objective: companyObjective,
+            actions: [companyAction1, companyAction2, companyAction3].filter(Boolean),
+          }
+        : undefined,
+      protectedCommitments: (
+        state.scheduleAuthority?.authoritativePlan?.commitments?.length
+          ? state.scheduleAuthority.authoritativePlan.commitments.map(commitment => ({
+              id: commitment.id,
+              title: commitment.title,
+              startMinutes: commitment.startMinutes,
+              endMinutes: commitment.endMinutes,
+              isStrict: commitment.isProtected,
+            }))
+          : (state.tomorrowPlan.protectedCommitments || [])
+      ),
+      ...(legacyStandaloneCompatibility
+        ? {
+            familyCommitments: state.tomorrowPlan.familyCommitments,
+            tradingIntention: state.tomorrowPlan.tradingIntention,
+            familyActivity,
+            tradingConditions: tradingFocus,
+          }
+        : {}),
       desiredRoutine,
       specialDayConditions: specialCondition,
-      knownConstraints: ['Screen cutoff at 20:00', 'Zero distractions during 4:00 PM family time'],
-      scheduleFocus: top1 ? `Deep Work on ${top1}` : 'Core System Infrastructure',
-      plannedMeal: 'High protein breakfast + slow carbs lunch from Meals Engine',
-      workoutType: 'Full-body compound sets (arms, chest, core, legs)',
+      knownConstraints: state.tomorrowPlan.knownConstraints || [],
+      scheduleFocus: top1 ? `Focus on ${top1}` : '',
+      plannedMeal: state.tomorrowPlan.plannedMeal || '',
+      workoutType: state.tomorrowPlan.workoutType || '',
       companyPriority: companyName,
-      familyActivity,
-      tradingConditions: tradingFocus,
     };
   }, [
     wakeTime,
@@ -209,6 +214,9 @@ export const TomorrowPlannerView: React.FC<TomorrowPlannerViewProps> = ({
     tradingFocus,
     desiredRoutine,
     specialCondition,
+    legacyStandaloneCompatibility,
+    state.scheduleAuthority,
+    state.tomorrowPlan,
   ]);
 
   // Real-time Feasibility Prediction
@@ -462,7 +470,7 @@ export const TomorrowPlannerView: React.FC<TomorrowPlannerViewProps> = ({
               <div className="flex justify-between items-center text-slate-600">
                 <span className="flex items-center gap-1.5">
                   <Heart className="w-3.5 h-3.5 text-rose-500" />
-                  Protected Family (4-7:30 PM):
+                  Protected Commitments:
                 </span>
                 <span className="font-mono font-semibold text-slate-800">
                   {feasibility.capacity.protectedFamilyMinutes}m
@@ -551,7 +559,7 @@ export const TomorrowPlannerView: React.FC<TomorrowPlannerViewProps> = ({
           </div>
 
           <div className="mt-4 pt-3 border-t border-slate-100 text-[11px] text-slate-500">
-            Protected Governance: Family 4:00 PM – 7:30 PM is strictly preserved.
+            Protected governance commitments supplied by the authoritative planning system are strictly preserved.
           </div>
         </div>
       </div>
@@ -568,7 +576,7 @@ export const TomorrowPlannerView: React.FC<TomorrowPlannerViewProps> = ({
               Simulate Next-Morning Late Wake Recovery
             </h3>
             <p className="text-xs text-slate-300 mt-1 max-w-2xl leading-relaxed">
-              When waking up late, the user does NOT rebuild the schedule manually. Execution OS detects the time delta, engages Minimum Viable Routine fallbacks, compresses morning anchors, and protects deep work, departures, and 4:00 PM family time.
+              When execution starts late, Execution OS detects the time delta and proposes bounded recovery while preserving authoritative commitments and delegated schedule limits.
             </p>
           </div>
 
@@ -623,9 +631,9 @@ export const TomorrowPlannerView: React.FC<TomorrowPlannerViewProps> = ({
 
             <div className="bg-white/5 p-3 rounded-xl border border-white/10">
               <span className="text-slate-400 block">Governance Protection:</span>
-              <span className="text-indigo-200 font-bold text-sm">Family 4:00 PM Locked</span>
+              <span className="text-indigo-200 font-bold text-sm">Protected Commitments Preserved</span>
               <span className="text-slate-400 block text-[11px] mt-0.5">
-                Trading: {recoveryResult.tradingGovernanceStatus}
+                External gates remain authoritative
               </span>
             </div>
           </div>
@@ -742,18 +750,18 @@ export const TomorrowPlannerView: React.FC<TomorrowPlannerViewProps> = ({
                   type="text"
                   value={top3}
                   onChange={e => setTop3(e.target.value)}
-                  placeholder="Priority 3 (Personal Vitality / Family Connection)"
+                  placeholder="Priority 3"
                   className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
             </div>
           </div>
 
-          {/* Company Priorities & Trading Intentions */}
+          {/* Optional standalone project priorities */}
           <div className="rounded-2xl bg-white border border-slate-200 p-6 shadow-sm space-y-4">
             <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
               <Briefcase className="w-5 h-5 text-indigo-600" />
-              <span>Company of the Day & Trading Governance</span>
+              <span>Optional Project Priorities</span>
             </h3>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -809,6 +817,8 @@ export const TomorrowPlannerView: React.FC<TomorrowPlannerViewProps> = ({
               />
             </div>
 
+            {legacyStandaloneCompatibility && (
+              <>
             {/* Trading Toggle */}
             <div className="pt-3 border-t border-slate-100 space-y-2">
               <div className="flex items-center justify-between">
@@ -841,10 +851,13 @@ export const TomorrowPlannerView: React.FC<TomorrowPlannerViewProps> = ({
                 />
               )}
             </div>
+
+              </>
+            )}
           </div>
         </div>
 
-        {/* Right Column: Appointments, Departure Constraints & Family Commitments */}
+        {/* Right Column: Appointments, Departure Constraints & Protected Commitments */}
         <div className="space-y-6">
           {/* Fixed Appointments */}
           <div className="rounded-2xl bg-white border border-slate-200 p-6 shadow-sm space-y-4">
@@ -1012,29 +1025,34 @@ export const TomorrowPlannerView: React.FC<TomorrowPlannerViewProps> = ({
             )}
           </div>
 
-          {/* Protected Family Commitment */}
+          {legacyStandaloneCompatibility && (
+            <>
+          {/* Protected Commitments */}
           <div className="rounded-2xl bg-white border border-slate-200 p-6 shadow-sm space-y-4">
             <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
               <Heart className="w-5 h-5 text-rose-500" />
-              <span>Protected Family Commitment (4:00 PM – 7:30 PM)</span>
+              <span>Protected Commitments</span>
             </h3>
 
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Family Activity & Human Connection
+                Legacy standalone protected activity
               </label>
               <input
                 type="text"
                 value={familyActivity}
                 onChange={e => setFamilyActivity(e.target.value)}
-                placeholder="e.g. Sunset park walk, unhurried picnic, baby play"
+                placeholder="Protected activity (legacy standalone only)"
                 className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
               <p className="text-[11px] text-slate-500 mt-1">
-                Strict governance: The 4:00 PM – 7:30 PM window is locked. Zero meetings or builder work permitted.
+                Protected windows are supplied by the authoritative planning system and cannot be displaced by Execution OS.
               </p>
             </div>
           </div>
+
+            </>
+          )}
         </div>
       </div>
     </div>
