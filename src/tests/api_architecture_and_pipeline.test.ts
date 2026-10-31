@@ -4,7 +4,7 @@ import { createApp } from '../server/createApp';
 import { createExecutionRepository } from '../repositories';
 import { TestClock } from '../clock';
 import { DEFAULT_APP_STATE } from '../data/defaultData';
-import { PROTECTED_FAMILY_START, PROTECTED_FAMILY_END } from '../services/allocationEngine';
+import { PROTECTED_FAMILY_START, PROTECTED_FAMILY_END } from './fixtures/legacyStandaloneScheduleConstants';
 
 describe('EOS-004 — Backend Service & API Architecture', () => {
   let app: any;
