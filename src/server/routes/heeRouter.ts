@@ -36,7 +36,8 @@ import {
   RecordPerformanceEvidenceCommand,
   RequestPerformanceExtensionCommand,
   ClosePerformanceSessionCommand,
-  CancelPerformanceSessionCommand
+  CancelPerformanceSessionCommand,
+  RedeemRewardCommand
 } from '../../commands/commands';
 import { processAuthoritativeCommand, CommandExecutionOptions } from '../commandPipeline';
 import { GovernanceEngine } from '../governance';
@@ -63,6 +64,8 @@ import { requirePermission } from '../auth';
 import { ConflictResolutionRecord, DeviceProfile, SyncQueueItem, LongitudinalWindow } from '../../types';
 import { scanLongitudinalAdaptations, generateLongitudinalExecutionHistory } from '../../services/adaptationEngine';
 import { buildDailyPerformanceRecord, buildWeeklyPerformanceRecord, buildDayOfWeekPerformanceProfiles } from '../../services/weeklyPerformanceIntelligence';
+import { performanceAiPartner } from '../../services/performanceAiPartner';
+import { performanceIntegrationHub } from '../../services/performanceIntegrationHub';
 import {
   ValidationError,
   ResourceNotFoundError,
@@ -1790,6 +1793,75 @@ export function createHeeRouter(repository: IExecutionRepository = defaultExecut
   });
 
   /**
+   * POST /api/v1/hee/performance/sessions/:id/ai
+   * Session-scoped AI execution partner. The AI is advisory and cannot mutate authoritative state.
+   */
+  router.post('/performance/sessions/:id/ai', mutationLimiter, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const state = await repository.loadState();
+      const session = (state.performanceSessions || []).find(s => s.id === req.params.id);
+      if (!session) return next(new ResourceNotFoundError(`Performance session ${req.params.id} not found.`));
+
+      const message = String(req.body?.message || '').trim();
+      const mode = req.body?.mode || session.environmentConfig.aiMode;
+      if (!message) return next(new ValidationError('message is required.'));
+
+      const result = await performanceAiPartner.respond({ session, state, message, mode });
+      res.status(200).json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  /**
+   * GET /api/v1/hee/performance/integrations
+   * Lists governed evidence adapters available to HEE-011.
+   */
+  router.get('/performance/integrations', async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      res.status(200).json({ success: true, data: performanceIntegrationHub.listAdapters() });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  /**
+   * POST /api/v1/hee/performance/sessions/:id/integrations/evidence
+   * Validates external/application evidence before recording it through the authoritative command pipeline.
+   */
+  router.post('/performance/sessions/:id/integrations/evidence', mutationLimiter, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const state = await repository.loadState();
+      const session = (state.performanceSessions || []).find(s => s.id === req.params.id);
+      if (!session) return next(new ResourceNotFoundError(`Performance session ${req.params.id} not found.`));
+
+      const adapterId = String(req.body?.adapterId || '');
+      if (!adapterId) return next(new ValidationError('adapterId is required.'));
+      const collected = performanceIntegrationHub.collectEvidence(session, state, {
+        adapterId,
+        payload: req.body?.payload || {},
+      });
+      if (!collected.valid) return next(new ValidationError(collected.reason));
+
+      await processAuthoritativeCommand(
+        req,
+        res,
+        next,
+        () => new RecordPerformanceEvidenceCommand({
+          sessionId: session.id,
+          type: collected.evidenceType,
+          source: 'INTEGRATION',
+          trustLevel: collected.trustLevel,
+          payload: collected.normalizedPayload,
+        }),
+        options
+      );
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  /**
    * POST /api/v1/hee/performance/sessions/:id/cancel
    */
   router.post('/performance/sessions/:id/cancel', mutationLimiter, async (req: Request, res: Response, next: NextFunction) => {
@@ -1802,6 +1874,16 @@ export function createHeeRouter(repository: IExecutionRepository = defaultExecut
         sessionId: req.params.id,
         reason: reason || 'Cancelled by user'
       }),
+      options
+    );
+  });
+
+  router.post('/rewards/:id/redeem', mutationLimiter, async (req: Request, res: Response, next: NextFunction) => {
+    await processAuthoritativeCommand(
+      req,
+      res,
+      next,
+      () => new RedeemRewardCommand({ rewardId: req.params.id }),
       options
     );
   });
