@@ -43,7 +43,7 @@ import {
 import { processAuthoritativeCommand, CommandExecutionOptions } from '../commandPipeline';
 import { GovernanceEngine } from '../governance';
 import { evaluateRoutineState } from '../../services/routineEngine';
-import { calculateDynamicAllocations, PROTECTED_FAMILY_START, PROTECTED_FAMILY_END } from '../../services/allocationEngine';
+import { calculateDynamicAllocations } from '../../services/allocationEngine';
 import { scanAndResolveDeviations } from '../../services/deviationEngine';
 import { getAutonomousNextDecision } from '../../services/decisionEngine';
 import { checkTaskDependencies } from '../../services/dependencyEngine';
@@ -67,6 +67,7 @@ import { scanLongitudinalAdaptations, generateLongitudinalExecutionHistory } fro
 import { buildDailyPerformanceRecord, buildWeeklyPerformanceRecord, buildDayOfWeekPerformanceProfiles } from '../../services/weeklyPerformanceIntelligence';
 import { performanceAiPartner } from '../../services/performanceAiPartner';
 import { performanceIntegrationHub } from '../../services/performanceIntegrationHub';
+import { getProtectedScheduleWindows } from '../../services/scheduleAuthorityService';
 import {
   ValidationError,
   ResourceNotFoundError,
@@ -610,31 +611,14 @@ export function createHeeRouter(repository: IExecutionRepository = defaultExecut
    */
   router.get('/governance/protected-commitments', async (_req: Request, res: Response, next: NextFunction) => {
     try {
+      const state = await repository.loadState();
       res.status(200).json({
         success: true,
         data: {
-          commitments: [
-            {
-              id: 'commitment-family-block',
-              name: 'Protected Family Life Window',
-              startMinutes: PROTECTED_FAMILY_START,
-              endMinutes: PROTECTED_FAMILY_END,
-              startTime: '16:00',
-              endTime: '19:30',
-              strict: true,
-              description: 'Non-negotiable family block — non-family activities are prohibited unless explicit emergency override granted.',
-            },
-            {
-              id: 'commitment-sleep-sanctuary',
-              name: 'Night Sleep Sanctuary',
-              startMinutes: 1350,
-              endMinutes: 330,
-              startTime: '22:30',
-              endTime: '05:30',
-              strict: true,
-              description: 'Mandatory rest window for neuro-biological recovery.',
-            },
-          ],
+          authorityMode: state.scheduleAuthority?.mode || 'STANDALONE',
+          planId: state.scheduleAuthority?.planId,
+          planRevision: state.scheduleAuthority?.planRevision,
+          commitments: getProtectedScheduleWindows(state),
         },
       });
     } catch (err) {
@@ -644,14 +628,30 @@ export function createHeeRouter(repository: IExecutionRepository = defaultExecut
 
   /**
    * PATCH /api/v1/hee/governance/protected-commitments
+   * Standalone-only compatibility endpoint. In HOS mode the host owns these boundaries.
    */
   router.patch('/governance/protected-commitments', async (req: Request, res: Response, next: NextFunction) => {
-    const { commitments } = req.body || {};
-    res.status(200).json({
-      success: true,
-      message: 'Protected commitments updated successfully',
-      data: { updatedCount: (commitments || []).length },
-    });
+    try {
+      const state = await repository.loadState();
+      if (state.scheduleAuthority?.mode === 'HOS_DELEGATED') {
+        return next(new GovernanceDeniedError(
+          'Protected commitments are owned by the HumanKernelOS Daily Operating Plan while HOS schedule authority is active.',
+          { rule: 'HOS_OWNS_PROTECTED_COMMITMENTS', planId: state.scheduleAuthority.planId }
+        ));
+      }
+      const commitments = Array.isArray(req.body?.commitments) ? req.body.commitments : [];
+      state.tomorrowPlan.protectedCommitments = commitments.map((item: any, index: number) => ({
+        id: String(item.id || `protected-${index}`),
+        title: String(item.title || item.name || 'Protected commitment'),
+        startMinutes: Number(item.startMinutes),
+        endMinutes: Number(item.endMinutes),
+        isStrict: item.isStrict !== false && item.strict !== false,
+      }));
+      await repository.saveState(state);
+      res.status(200).json({ success: true, data: { updatedCount: commitments.length } });
+    } catch (err) {
+      next(err);
+    }
   });
 
   // =========================================================================
