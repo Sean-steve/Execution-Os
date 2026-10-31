@@ -76,23 +76,28 @@ export const NowView: React.FC<NowViewProps> = ({
   const handleLaunchOrComplete = () => {
     if (!task) return;
 
-    // Check if task has a dedicated interactive execution environment
-    if (task.interactiveActionType === 'FOCUS_BLOCK' || task.interactiveActionType === 'COMPANY_TARGET' || task.id.includes('deep-work')) {
-      onNavigateToView('DEEP_WORK');
+    const performanceActionTypes = new Set([
+      'FOCUS_BLOCK',
+      'COMPANY_TARGET',
+      'TRADING_GATEKEEPER',
+      'FAMILY_OUTING',
+      'IDENTITY_CHECK',
+      'OUTSIDE_TIMER',
+      'WORKOUT_TRACKER',
+      'MEDITATION_TIMER',
+    ]);
+
+    if (
+      performanceActionTypes.has(task.interactiveActionType || '') ||
+      task.id.includes('deep-work') ||
+      task.id === 'task-trading-protocol' ||
+      task.id === 'task-family-life' ||
+      task.id === 'task-family-connection'
+    ) {
+      void handlePerformWorkspace();
       return;
     }
-    if (task.interactiveActionType === 'TRADING_GATEKEEPER' || task.id === 'task-trading-protocol') {
-      onNavigateToView('TRADING');
-      return;
-    }
-    if (task.interactiveActionType === 'FAMILY_OUTING' || task.id === 'task-family-life' || task.id === 'task-family-connection') {
-      onNavigateToView('FAMILY');
-      return;
-    }
-    if (task.interactiveActionType === 'IDENTITY_CHECK' || task.interactiveActionType === 'OUTSIDE_TIMER' || task.interactiveActionType === 'WORKOUT_TRACKER' || task.interactiveActionType === 'MEDITATION_TIMER') {
-      onNavigateToView('MORNING_PRIME');
-      return;
-    }
+
     if (task.interactiveActionType === 'COMMAND_CENTER' || task.id === 'task-command-center') {
       onNavigateToView('COMMAND_CENTER');
       return;
@@ -102,8 +107,7 @@ export const NowView: React.FC<NowViewProps> = ({
       return;
     }
 
-    // Otherwise directly mark complete
-    handleDirectComplete();
+    void handleDirectComplete();
   };
 
   const handleDirectComplete = async () => {
@@ -230,10 +234,10 @@ export const NowView: React.FC<NowViewProps> = ({
   // Determine button CTA text based on task type
   const getPrimaryButtonLabel = () => {
     if (!task) return 'All Current Tasks Completed';
-    if (task.interactiveActionType === 'FOCUS_BLOCK' || task.id.includes('deep-work')) return 'Start Focus Block';
-    if (task.interactiveActionType === 'TRADING_GATEKEEPER' || task.id === 'task-trading-protocol') return 'Open Trading Protocol';
-    if (task.interactiveActionType === 'FAMILY_OUTING' || task.id === 'task-family-life') return 'Start Family Time';
-    if (task.interactiveActionType === 'IDENTITY_CHECK' || task.interactiveActionType === 'OUTSIDE_TIMER' || task.interactiveActionType === 'WORKOUT_TRACKER') return 'Launch Morning Routine';
+    if (task.interactiveActionType === 'FOCUS_BLOCK' || task.id.includes('deep-work')) return 'Perform Focus Block';
+    if (task.interactiveActionType === 'TRADING_GATEKEEPER' || task.id === 'task-trading-protocol') return 'Perform Trading Protocol';
+    if (task.interactiveActionType === 'FAMILY_OUTING' || task.id === 'task-family-life') return 'Enter Family Time';
+    if (task.interactiveActionType === 'IDENTITY_CHECK' || task.interactiveActionType === 'OUTSIDE_TIMER' || task.interactiveActionType === 'WORKOUT_TRACKER' || task.interactiveActionType === 'MEDITATION_TIMER') return 'Perform Morning Activity';
     if (task.interactiveActionType === 'COMMAND_CENTER') return 'Open Command Center';
     if (task.interactiveActionType === 'EVENING_REVIEW') return 'Begin Evening Review';
     return 'Mark Completed';
