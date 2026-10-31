@@ -30,7 +30,7 @@ export const checkTaskDependencies = (
   const blockingTaskIds: string[] = [];
 
   // Domain-specific execution rules are supplied by registered adapters.
-  for (const result of domainExecutionPolicies.evaluateStart(state, taskId)) {
+  for (const result of domainExecutionPolicies.evaluateDependency(state, taskId)) {
     if (!result.blocked) continue;
     blockingReasons.push(...result.reasons);
     blockingTaskIds.push(...(result.blockingTaskIds || []));
