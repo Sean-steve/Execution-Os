@@ -5,6 +5,7 @@ import { HOSSubjectContext, HOSIdentityBridge } from './identityBridge';
 import { HOS_ENGINE_CAPABILITIES } from './engineManifest';
 import { HOSEventMeshBridge } from './eventMesh';
 import { HOSEngineLifecycleRegistry } from './lifecycle';
+import { IHOSBoundaryStore, MemoryHOSBoundaryStore } from './boundaryStore';
 
 export interface HOSCapabilityResult {
   capability: string;
@@ -35,12 +36,11 @@ const stable = (value: any): string => {
 };
 
 export class HOSCapabilityService {
-  private idempotency = new Map<string, IdempotencyRecord>();
-
   constructor(
     private repositories: IHOSRepositoryFactory,
     private eventMesh: HOSEventMeshBridge,
-    private lifecycle: HOSEngineLifecycleRegistry
+    private lifecycle: HOSEngineLifecycleRegistry,
+    private boundaryStore: IHOSBoundaryStore = new MemoryHOSBoundaryStore()
   ) {}
 
   private definition(name: string) {
@@ -164,12 +164,12 @@ export class HOSCapabilityService {
       : undefined;
     const fingerprint = stable(payload || {});
     if (scopedKey) {
-      const cached = this.idempotency.get(scopedKey);
+      const cached = this.boundaryStore.getIdempotency(`capability::${scopedKey}`);
       if (cached) {
         if (cached.fingerprint !== fingerprint) {
           throw new Error('Idempotency key reuse detected with a different capability payload.');
         }
-        return { ...cached.result, idempotentReplay: true };
+        return { ...(cached.response as HOSCapabilityResult), idempotentReplay: true };
       }
     }
 
@@ -298,7 +298,11 @@ export class HOSCapabilityService {
     };
 
     if (scopedKey) {
-      this.idempotency.set(scopedKey, { fingerprint, result: JSON.parse(JSON.stringify(result)) });
+      this.boundaryStore.setIdempotency(`capability::${scopedKey}`, {
+        fingerprint,
+        response: JSON.parse(JSON.stringify(result)),
+        createdAtUtc: new Date().toISOString(),
+      });
     }
     return result;
   }
