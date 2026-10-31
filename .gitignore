@@ -12,3 +12,10 @@ data/canonical_execution_db.json
 data/durable_events_log.json
 data/*.tmp
 data/backups/
+
+# HOS production boundary/runtime state
+data/hos_boundary_store.json
+data/dead_letter_queue.json
+data/subjects/
+data/*.json.tmp
+data/**/*.tmp
