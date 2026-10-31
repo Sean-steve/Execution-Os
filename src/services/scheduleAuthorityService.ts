@@ -27,11 +27,11 @@ export function getProtectedScheduleWindows(state: AppState): ScheduleBoundaryWi
       source: state.scheduleAuthority?.mode === 'HOS_DELEGATED' ? 'HOS' : 'USER',
     }));
   const protectedTasks: ScheduleBoundaryWindow[] = state.tasks
-    .filter(t => t.isProtected)
+    .filter(t => t.isProtected || state.activities.find(a => a.id === t.id)?.isProtectedCommitment)
     .map(t => ({
       id: `task-window-${t.id}`,
-      startMinutes: t.startMinutes,
-      endMinutes: t.endMinutes,
+      startMinutes: t.allocatedStartMinutes ?? t.startMinutes,
+      endMinutes: t.allocatedEndMinutes ?? t.endMinutes,
       type: 'PROTECTED',
       label: t.title,
       source: 'USER',
