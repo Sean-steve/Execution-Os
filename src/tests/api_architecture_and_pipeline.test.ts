@@ -192,7 +192,7 @@ describe('EOS-004 — Backend Service & API Architecture', () => {
 
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe('GOVERNANCE_DENIED');
-    expect(res.body.error.message).toContain('Protected Family block');
+    expect(res.body.error.message).toContain('Protected commitment');
   });
 
   it('enforces Trading Gatekeeper (TRADING_GATE_CLOSED / DEPENDENCY_BLOCKED)', async () => {
@@ -260,7 +260,7 @@ describe('EOS-004 — Backend Service & API Architecture', () => {
 
     const commRes = await request(app).get('/api/v1/hee/governance/protected-commitments');
     expect(commRes.status).toBe(200);
-    expect(commRes.body.data.commitments.some((c: any) => c.name.includes('Family'))).toBe(true);
+    expect(commRes.body.data.commitments.some((c: any) => c.title.includes('Family'))).toBe(true);
   });
 
   // =========================================================================
