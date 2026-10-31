@@ -398,28 +398,60 @@ describe('Execution OS Final Production Truth Hardening & Certification Suite', 
       expect(resStep7Blocked.status).toBe(422);
       expect(resStep7Blocked.body.error.code).toBe('TRADING_GATE_CLOSED');
 
-      // STEP 8: Complete Trading Prep & Protocol Gatekeeper
+      // STEP 8: Record real Trading Prep evidence & complete the protocol gatekeeper
       await request(currentApp)
         .post('/api/v1/hee/activities/task-trading-protocol/start')
         .set('Authorization', `Bearer ${token}`)
         .send({});
-      await request(currentApp)
+
+      const resTradingEvidence = await request(currentApp)
+        .post('/api/v1/hee/trading/protocol')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          protocol: {
+            isTradingDay: true,
+            marketAnalyzed: true,
+            setupDetected: true,
+            strategyCriteriaMet: true,
+            riskLimitsSatisfied: true,
+            stopLossDefined: true,
+            noSetupJustified: false,
+            executed: false,
+            closedTerminal: false,
+          },
+        });
+      expect(resTradingEvidence.status).toBe(200);
+
+      const resPrepComplete = await request(currentApp)
         .post('/api/v1/hee/activities/task-trading-protocol/complete')
         .set('Authorization', `Bearer ${token}`)
         .send({ executionStatus: 'ON_TIME' });
+      expect(resPrepComplete.status).toBe(200);
 
-      // STEP 9: Trading Execution Gate Opens Once Prerequisite Completed
+      // STEP 9: Trading Execution Gate Opens Once real prerequisite evidence is complete
       const resStep9Allowed = await request(currentApp)
         .post('/api/v1/hee/activities/task-trading-execution/start')
         .set('Authorization', `Bearer ${token}`)
         .send({});
       expect(resStep9Allowed.status).toBe(200);
 
-      // STEP 10: Complete Trading Execution
-      await request(currentApp)
+      // STEP 10: Record executed terminal outcome, then complete Trading Execution
+      const resTradeTerminal = await request(currentApp)
+        .post('/api/v1/hee/trading/protocol')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          protocol: {
+            executed: true,
+            closedTerminal: true,
+          },
+        });
+      expect(resTradeTerminal.status).toBe(200);
+
+      const resTradeComplete = await request(currentApp)
         .post('/api/v1/hee/activities/task-trading-execution/complete')
         .set('Authorization', `Bearer ${token}`)
         .send({ executionStatus: 'ON_TIME' });
+      expect(resTradeComplete.status).toBe(200);
 
       // STEP 11: Seed Longitudinal Evidence and Execute Adaptation Cycle (HEE-006)
       await request(currentApp)
