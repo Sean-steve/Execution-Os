@@ -71,7 +71,8 @@ import {
   ResourceNotFoundError,
   GovernanceDeniedError,
   TradingGateClosedError,
-  DependencyBlockedError
+  DependencyBlockedError,
+  SecurityIntegrityError
 } from '../errors';
 
 export function createHeeRouter(repository: IExecutionRepository = defaultExecutionRepository, clock?: IClock): Router {
