@@ -35,7 +35,7 @@ import {
 import { CanonicalDatabase, LocalStorageCanonicalEngine, InMemoryCanonicalStorageEngine } from './canonicalDatabase';
 import { FileCanonicalStorageEngine } from './fileCanonicalStorageEngine';
 import { EntityMapper, DEFAULT_USER_ID, DEFAULT_TIMEZONE } from './entityMapper';
-import { DEFAULT_APP_STATE } from '../data/defaultData';
+import { RUNTIME_INITIAL_STATE } from '../data/runtimeInitialState';
 import {
   ActivityInstanceEntity,
   AllocationEntity,
@@ -898,12 +898,12 @@ export class ProductionExecutionRepository implements IUnitOfWork, IExecutionRep
     await this.db.initialize();
     const count = await this.db.count('profiles');
     if (count === 0) {
-      const canonical = this.mapper.appStateToCanonical(DEFAULT_APP_STATE);
+      const canonical = this.mapper.appStateToCanonical(RUNTIME_INITIAL_STATE);
       await this.db.restoreSnapshot(canonical);
-      return JSON.parse(JSON.stringify(DEFAULT_APP_STATE));
+      return JSON.parse(JSON.stringify(RUNTIME_INITIAL_STATE));
     }
     const snapshot = this.db.getSnapshot();
-    return this.mapper.canonicalToAppState(snapshot, DEFAULT_APP_STATE);
+    return this.mapper.canonicalToAppState(snapshot, RUNTIME_INITIAL_STATE);
   }
 
   async save(state: AppState): Promise<void> {
@@ -922,9 +922,9 @@ export class ProductionExecutionRepository implements IUnitOfWork, IExecutionRep
 
   async reset(): Promise<AppState> {
     await this.db.clearAll();
-    const canonical = this.mapper.appStateToCanonical(DEFAULT_APP_STATE);
+    const canonical = this.mapper.appStateToCanonical(RUNTIME_INITIAL_STATE);
     await this.db.restoreSnapshot(canonical);
-    return JSON.parse(JSON.stringify(DEFAULT_APP_STATE));
+    return JSON.parse(JSON.stringify(RUNTIME_INITIAL_STATE));
   }
 
   async getFullState(): Promise<AppState> {
