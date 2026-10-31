@@ -1282,7 +1282,7 @@ export type PerformanceDimensionKey =
   | 'PHYSICAL_EXECUTION'
   | 'RECOVERY_EFFECTIVENESS'
   | 'PROTECTED_COMMITMENT_INTEGRITY'
-  | 'TRADING_DISCIPLINE'
+  | 'EXTERNAL_POLICY_COMPLIANCE'
   | 'SCHEDULE_INTEGRITY'
   | 'LIFE_QUALITY_PROXY';
 
@@ -1326,7 +1326,7 @@ export interface DailyPerformanceRecord {
   focusPerformanceScore: number;
   physicalExecutionScore: number;
   protectedCommitmentIntegrityScore: number;
-  tradingDisciplineScore: number | null;
+  externalPolicyComplianceScore: number | null;
   recoveryEffectivenessScore: number;
   scheduleIntegrityScore: number;
   lifeQualityProxyScore: number | null;
@@ -1382,7 +1382,7 @@ export interface WeeklyPerformanceRecord {
   protectedCommitmentIntegrity: number;
   focusPerformance: number;
   physicalPerformance: number;
-  tradingDiscipline: number | null;
+  externalPolicyCompliance: number | null;
   bestDayDate?: string;
   lowestDayDate?: string;
   bestDayByDimension: Partial<Record<PerformanceDimensionKey, string>>;
@@ -1464,6 +1464,7 @@ export interface HOSDailyOperatingPlan {
   timezone: string;
   source: 'HOS';
   receivedAtUtc: string;
+  executionActivities?: RoutineTask[];
   commitments: AuthoritativeScheduleCommitment[];
   delegatedWindows: DelegatedExecutionWindow[];
 }
