@@ -228,9 +228,36 @@ export function acceptHOSDailyOperatingPlan(
   state: AppState,
   plan: HOSDailyOperatingPlan
 ): AppState {
+  const authoritativeTasks = plan.executionActivities
+    ? plan.executionActivities.map(task => ({
+        ...task,
+        allocatedStartMinutes: task.startMinutes,
+        allocatedEndMinutes: task.endMinutes,
+      }))
+    : state.tasks;
+
   return {
     ...state,
     timezone: plan.timezone || state.timezone,
+    activeDate: plan.localDate || state.activeDate,
+    tasks: authoritativeTasks,
+    dynamicAllocations: authoritativeTasks.map(task => ({
+      activityId: task.id,
+      instanceId: `inst-${task.id}`,
+      title: task.title,
+      originalStartMinutes: task.startMinutes,
+      originalEndMinutes: task.endMinutes,
+      allocatedStartMinutes: task.startMinutes,
+      allocatedEndMinutes: task.endMinutes,
+      durationMinutes: task.endMinutes - task.startMinutes,
+      isCompressed: false,
+      isFallback: false,
+      fallbackLevel: task.fallbackLevel || 0,
+      isProtected: Boolean(task.isProtected),
+      priority: task.isNonNegotiable ? 5 : 3,
+      reasonForAdjustment: 'Authoritative HOS Daily Operating Plan.',
+      dependencyStatus: 'SATISFIED',
+    })),
     scheduleAuthority: {
       mode: 'HOS',
       authoritativePlan: plan,
