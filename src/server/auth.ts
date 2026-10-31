@@ -137,7 +137,7 @@ export function authMiddleware(req: Request, _res: Response, next: NextFunction)
     return next(new AuthenticationError('Authentication required: Missing Authorization header in production standalone mode.'));
   }
 
-  const userId = customUserId || 'standalone-test-subject';
+  const userId = customUserId || process.env.LEGACY_STANDALONE_USER_ID || 'standalone-test-subject';
   const role = (req.headers['x-user-role'] as any) || 'OWNER';
   req.user = {
     userId,
