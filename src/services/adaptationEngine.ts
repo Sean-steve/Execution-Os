@@ -336,8 +336,8 @@ export function scanLongitudinalAdaptations(
         isSingleDayAnomaly: false,
         hypothesis,
         evidenceDetails: [
-          `${conflictCount} recorded encroachments into protected family boundary (16:00-19:30)`,
-          `Downstream family block duration compressed`
+          `${conflictCount} recorded encroachments into authoritative protected commitments`,
+          `Downstream protected-commitment integrity was reduced`
         ],
         detectedAt: new Date().toISOString(),
       });
