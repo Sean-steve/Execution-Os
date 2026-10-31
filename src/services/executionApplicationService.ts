@@ -47,7 +47,10 @@ import {
   RequestPerformanceExtensionCommand,
   ClosePerformanceSessionCommand,
   CancelPerformanceSessionCommand,
-  RedeemRewardCommand
+  RedeemRewardCommand,
+  SetHOSOperatingPlanCommand,
+  ResolveScheduleProposalCommand,
+  UpsertExternalExecutionGateCommand
 } from '../commands/commands';
 
 /**
@@ -130,6 +133,15 @@ export class ExecutionApplicationService {
       case 'RedeemReward':
         command = new RedeemRewardCommand(desc.payload);
         break;
+      case 'SetHOSOperatingPlan':
+        command = new SetHOSOperatingPlanCommand(desc.payload);
+        break;
+      case 'ResolveScheduleProposal':
+        command = new ResolveScheduleProposalCommand(desc.payload);
+        break;
+      case 'UpsertExternalExecutionGate':
+        command = new UpsertExternalExecutionGateCommand(desc.payload);
+        break;
       case 'CompleteActivity':
         command = new CompleteActivityCommand(desc.payload);
         break;
@@ -147,6 +159,18 @@ export class ExecutionApplicationService {
     }
 
     return this.dispatch(command, currentState);
+  }
+
+  async setHOSOperatingPlan(plan: import('../types').HOSDailyOperatingPlan, currentState?: AppState): Promise<CommandResult> {
+    return this.dispatch(new SetHOSOperatingPlanCommand({ plan }), currentState);
+  }
+
+  async resolveScheduleProposal(proposalId: string, decision: 'ACCEPT' | 'REJECT', currentState?: AppState): Promise<CommandResult> {
+    return this.dispatch(new ResolveScheduleProposalCommand({ proposalId, decision }), currentState);
+  }
+
+  async upsertExternalExecutionGate(gate: import('../types').ExternalExecutionGate, currentState?: AppState): Promise<CommandResult> {
+    return this.dispatch(new UpsertExternalExecutionGateCommand({ gate }), currentState);
   }
 
   async planTomorrow(plan: Partial<TomorrowPlan>, currentState?: AppState): Promise<CommandResult> {
