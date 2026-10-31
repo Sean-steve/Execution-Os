@@ -3,6 +3,7 @@ import { getCurrentTimeMinutes } from './storageService';
 import { checkTaskDependencies } from './dependencyEngine';
 import { getFallbackPolicyForTask, selectOptimalFallbackTier } from './fallbackEngine';
 import { getWeeklyPerformanceFitModifier } from './weeklyPerformanceIntelligence';
+import { calculateDynamicAllocations as calculateLegacyDynamicAllocations } from '../adapters/legacyStandaloneAllocationEngine';
 import {
   getAuthoritativeProtectedCommitments,
   requestSingleActivityScheduleChange,
@@ -31,6 +32,10 @@ function nextProtectedConflict(state: AppState, start: number, end: number) {
  * It does not decide whole-person policy and does not own the global schedule.
  */
 export const calculateDynamicAllocations = (state: AppState): AllocationResult => {
+  if ((state as any).legacyStandaloneCompatibility) {
+    return calculateLegacyDynamicAllocations(state);
+  }
+
   const currentMinutes = getCurrentTimeMinutes(state);
   const mode = state.currentMode;
   const tasks = [...state.tasks];
