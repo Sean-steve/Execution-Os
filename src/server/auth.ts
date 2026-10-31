@@ -34,7 +34,7 @@ export function getExecutionIdentityMode(): ExecutionIdentityMode {
 }
 
 function isPublicPath(path: string, mode: ExecutionIdentityMode): boolean {
-  const publicPaths = ['/api/health', '/health', '/api/v1/hos/manifest', '/api/v1/hos/health'];
+  const publicPaths = ['/api/health', '/health', '/api/v1/hos/manifest', '/api/v1/hos/health', '/api/v1/hos/readiness'];
   if (publicPaths.some(p => path === p || path.endsWith(p))) return true;
   return mode === 'LEGACY_STANDALONE' && path.endsWith('/api/v1/hee/auth/token');
 }
