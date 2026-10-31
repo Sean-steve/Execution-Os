@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { SystemEvent } from '../types';
 import { IDeadLetterQueue, defaultDeadLetterQueue } from '../services/deadLetterQueue';
 import { HOSSubjectContext } from './identityBridge';
-import { IHOSBoundaryStore, MemoryHOSBoundaryStore } from './boundaryStore';
+import { IHOSBoundaryStore, MemoryHOSBoundaryStore, defaultHOSBoundaryStore } from './boundaryStore';
 
 export interface HOSEventEnvelope {
   id: string;
@@ -220,4 +220,4 @@ export class HOSEventMeshBridge {
   }
 }
 
-export const defaultHOSEventMeshBridge = new HOSEventMeshBridge();
+export const defaultHOSEventMeshBridge = new HOSEventMeshBridge(new HttpHOSEventMeshTransport(), defaultDeadLetterQueue, 3, defaultHOSBoundaryStore);
