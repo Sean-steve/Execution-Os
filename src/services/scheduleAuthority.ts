@@ -268,3 +268,49 @@ export function acceptHOSDailyOperatingPlan(
     lastReallocationReason: `HOS Daily Operating Plan ${plan.planId}@${plan.planVersion} is authoritative.`,
   };
 }
+
+
+export function resolveHOSScheduleProposal(
+  state: AppState,
+  proposalId: string,
+  decision: 'ACCEPT' | 'REJECT'
+): AppState {
+  const proposal = (state.scheduleProposals || []).find(p => p.id === proposalId);
+  if (!proposal) return state;
+
+  const now = new Date().toISOString();
+
+  if (decision === 'REJECT') {
+    return {
+      ...state,
+      scheduleProposals: (state.scheduleProposals || []).map(p =>
+        p.id === proposalId ? { ...p, status: 'REJECTED', resolvedAtUtc: now } : p
+      ),
+    };
+  }
+
+  const allocationByTask = new Map(proposal.allocations.map(a => [a.activityId, a]));
+  const tasks = state.tasks.map(task => {
+    const allocation = allocationByTask.get(task.id);
+    return allocation
+      ? {
+          ...task,
+          allocatedStartMinutes: allocation.allocatedStartMinutes,
+          allocatedEndMinutes: allocation.allocatedEndMinutes,
+          fallbackLevel: allocation.fallbackLevel,
+        }
+      : task;
+  });
+
+  return {
+    ...state,
+    tasks,
+    dynamicAllocations: [
+      ...(state.dynamicAllocations || []).filter(a => !allocationByTask.has(a.activityId)),
+      ...proposal.allocations,
+    ],
+    scheduleProposals: (state.scheduleProposals || []).map(p =>
+      p.id === proposalId ? { ...p, status: 'ACCEPTED', resolvedAtUtc: now } : p
+    ),
+  };
+}
