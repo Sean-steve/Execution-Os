@@ -64,7 +64,7 @@ import { defaultIdempotencyStore } from '../idempotency';
 import { defaultRateLimiter } from '../rateLimiter';
 import { SchemaValidator } from '../validation';
 import { SecurityEngine } from '../security';
-import { requirePermission } from '../auth';
+import { requirePermission, getExecutionIdentityMode } from '../auth';
 import { ConflictResolutionRecord, DeviceProfile, SyncQueueItem, LongitudinalWindow } from '../../types';
 import { scanLongitudinalAdaptations } from '../../services/adaptationEngine';
 import { buildDailyPerformanceRecord, buildWeeklyPerformanceRecord, buildDayOfWeekPerformanceProfiles } from '../../services/weeklyPerformanceIntelligence';
@@ -105,6 +105,9 @@ export function createHeeRouter(repository: IExecutionRepository = defaultExecut
    */
   router.post('/auth/token', (req: Request, res: Response, next: NextFunction) => {
     try {
+      if (getExecutionIdentityMode() !== 'LEGACY_STANDALONE') {
+        return next(new SecurityIntegrityError('Execution OS does not mint identity tokens while HumanKernelOS is the identity authority.'));
+      }
       if (process.env.NODE_ENV === 'production') {
         const expectedBootstrapSecret = process.env.HEE_AUTH_BOOTSTRAP_SECRET;
         const suppliedBootstrapSecret = String(req.headers['x-hee-bootstrap-secret'] || '');
