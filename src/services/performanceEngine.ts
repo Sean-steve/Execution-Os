@@ -50,6 +50,27 @@ function publishPerformanceEvent(event: {
   }
 }
 
+function canonicalPerformanceActivityType(task: RoutineTask): string {
+  switch (task.interactiveActionType) {
+    case 'FOCUS_BLOCK':
+    case 'COMPANY_TARGET':
+      return 'DEEP_WORK';
+    case 'WORKOUT_TRACKER':
+      return 'WORKOUT';
+    case 'MEDITATION_TIMER':
+      return 'MEDITATION';
+    case 'OUTSIDE_TIMER':
+    case 'IDENTITY_CHECK':
+      return 'MORNING_LIGHT';
+    case 'TRADING_GATEKEEPER':
+      return 'TRADING';
+    case 'FAMILY_OUTING':
+      return 'FAMILY';
+    default:
+      return task.interactiveActionType || task.category || task.anchorId || 'GENERIC';
+  }
+}
+
 export class HumanPerformanceEngine {
   constructor(private readonly clock: IClock = defaultClock) {}
 
@@ -123,9 +144,10 @@ export class HumanPerformanceEngine {
 
     const nowUtc = this.clock.toISOString();
     const resolvedEnv = this.resolveEnvironment(task, options?.environmentType);
+    const canonicalActivityType = canonicalPerformanceActivityType(task);
     const protocol = options?.protocolId
-      ? (CANONICAL_PERFORMANCE_PROTOCOLS.find(p => p.id === options.protocolId) || getProtocolForActivity(task.interactiveActionType || task.anchorId, resolvedEnv))
-      : getProtocolForActivity(task.interactiveActionType || task.anchorId, resolvedEnv);
+      ? (CANONICAL_PERFORMANCE_PROTOCOLS.find(p => p.id === options.protocolId) || getProtocolForActivity(canonicalActivityType, resolvedEnv))
+      : getProtocolForActivity(canonicalActivityType, resolvedEnv);
 
     const stepExecutions: PerformanceStepExecution[] = protocol.steps.map((step, idx) => ({
       stepId: step.id,
