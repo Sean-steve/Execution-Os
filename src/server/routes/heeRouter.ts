@@ -99,6 +99,14 @@ export function createHeeRouter(repository: IExecutionRepository = defaultExecut
    */
   router.post('/auth/token', (req: Request, res: Response, next: NextFunction) => {
     try {
+      if (process.env.NODE_ENV === 'production') {
+        const expectedBootstrapSecret = process.env.HEE_AUTH_BOOTSTRAP_SECRET;
+        const suppliedBootstrapSecret = String(req.headers['x-hee-bootstrap-secret'] || '');
+        if (!expectedBootstrapSecret || expectedBootstrapSecret.length < 32 || suppliedBootstrapSecret !== expectedBootstrapSecret) {
+          return next(new SecurityIntegrityError('Production token bootstrap requires an authorized bootstrap credential.'));
+        }
+      }
+
       const { userId = 'user-owner', role = 'OWNER', tenantId = 'tenant-default', durationSeconds = 86400 } = req.body || {};
       const token = SecurityEngine.generateSessionToken(userId, role, tenantId, durationSeconds);
       const claims = SecurityEngine.verifySessionToken(token);
