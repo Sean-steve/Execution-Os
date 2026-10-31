@@ -3,7 +3,7 @@
  * Strongly typed client for all /api/v1/hee/* REST endpoints
  */
 
-import { AppState, RoutineTask, SystemMode, DayType, TomorrowPlan, UserOverrideRecord, AutonomyLevel } from '../types';
+import { AppState, RoutineTask, SystemMode, DayType, TomorrowPlan, UserOverrideRecord, AutonomyLevel, AIMode } from '../types';
 import { ApiError, ErrorCode, StructuredErrorResponse } from '../server/errors';
 
 export interface ApiClientConfig {
@@ -387,6 +387,55 @@ export class ExecutionApiClient {
       method: 'POST',
       body: JSON.stringify({ wakeMinutes, newDate }),
     });
+  }
+
+  // =========================================================================
+  // HEE-011 PERFORMANCE AI & INTEGRATION EVIDENCE
+  // =========================================================================
+
+  async sendPerformanceAiMessage(sessionId: string, message: string, mode: AIMode) {
+    return this.request<{
+      reply: string;
+      mode: AIMode;
+      requiresApproval: boolean;
+      proposedAction?: { type: string; payload?: Record<string, any> };
+      scopedContext: Record<string, any>;
+      provider: 'GEMINI' | 'DETERMINISTIC';
+    }>(`/api/v1/hee/performance/sessions/${encodeURIComponent(sessionId)}/ai`, {
+      method: 'POST',
+      body: JSON.stringify({ message, mode }),
+    });
+  }
+
+  async getPerformanceIntegrations() {
+    return this.request('/api/v1/hee/performance/integrations', { method: 'GET' });
+  }
+
+  async recordIntegrationEvidence(sessionId: string, adapterId: string, payload: Record<string, any>) {
+    return this.request(`/api/v1/hee/performance/sessions/${encodeURIComponent(sessionId)}/integrations/evidence`, {
+      method: 'POST',
+      body: JSON.stringify({ adapterId, payload }),
+    });
+  }
+
+  async getDailyPerformance(date: string) {
+    return this.request(`/api/v1/hee/performance/daily/${encodeURIComponent(date)}`, { method: 'GET' });
+  }
+
+  async getWeeklyPerformance(weekId: string) {
+    return this.request(`/api/v1/hee/performance/weekly/${encodeURIComponent(weekId)}`, { method: 'GET' });
+  }
+
+  async getDayOfWeekPerformance() {
+    return this.request('/api/v1/hee/performance/day-of-week', { method: 'GET' });
+  }
+
+  async getPerformanceInsights() {
+    return this.request('/api/v1/hee/performance/insights', { method: 'GET' });
+  }
+
+  async redeemReward(rewardId: string) {
+    return this.request(`/api/v1/hee/rewards/${encodeURIComponent(rewardId)}/redeem`, { method: 'POST' });
   }
 
   // =========================================================================
