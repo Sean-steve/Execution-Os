@@ -144,7 +144,7 @@ describe('HumanKernelOS E4-E6 Integration Certification', () => {
   });
 
   it('E4: Execution OS cannot mint standalone identity tokens while HOS is authoritative', async () => {
-    const assertion = assertionFor('hos-user-alpha');
+    const assertion = assertionFor('hos-user-alpha', [...ALL_PERMISSIONS, 'execution.legacy.api']);
     const res = await request(app)
       .post('/api/v1/hee/auth/token')
       .set(headersFor(assertion))
