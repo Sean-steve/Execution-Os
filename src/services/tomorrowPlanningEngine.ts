@@ -738,6 +738,77 @@ export const executeLateWakeRecovery = (
 
   let nextState = { ...state };
 
+  if (state.scheduleAuthority?.mode === 'HOS_DELEGATED' && isMaterialDeviation) {
+    const devId = `dev-schedule-drift-${Date.now()}`;
+    const deviation = {
+      id: devId,
+      timestamp: currentClock.toISOString(),
+      activityId: 'day-schedule',
+      type: 'LATE' as const,
+      severity: driftMinutes > 60 ? ('HIGH' as const) : ('MEDIUM' as const),
+      minutesDelayed: driftMinutes,
+      likelyCause: `Observed execution start drifted +${driftMinutes}m from the HOS Daily Operating Plan.`,
+      impactSummary: 'Execution OS recalculated delegated activities without changing host-owned schedule boundaries.',
+      isResolved: false,
+      resolvedAutonomously: false,
+    };
+    nextState.deviations = [deviation, ...(nextState.deviations || [])];
+
+    const allocation = calculateDynamicAllocations(nextState);
+    nextState.dynamicAllocations = allocation.allocations;
+    nextState.tasks = allocation.recalculatedTasks;
+    if (allocation.scheduleProposal) {
+      nextState.pendingScheduleProposals = [
+        ...(nextState.pendingScheduleProposals || []).filter(p => p.status === 'PROPOSED'),
+        allocation.scheduleProposal,
+      ];
+    }
+
+    const event = createSystemEvent(
+      allocation.scheduleProposal ? 'ScheduleChangeProposed' : 'ScheduleReallocated',
+      allocation.scheduleProposal?.id || 'dynamicAllocations',
+      {
+        authority: 'HOS',
+        driftMinutes,
+        planId: state.scheduleAuthority.planId,
+        planRevision: state.scheduleAuthority.planRevision,
+        proposedChanges: allocation.proposedChangesCount || 0,
+      },
+      nextState,
+      'SYSTEM_KERNEL',
+      undefined,
+      currentClock
+    );
+    nextState.events = [event, ...(nextState.events || [])].slice(0, 300);
+    const nextAction = getAutonomousNextAction(nextState);
+
+    return {
+      state: nextState,
+      result: {
+        deviationDetected: true,
+        plannedWakeMinutes: plannedWake,
+        actualWakeMinutes: actualWake,
+        driftMinutes,
+        compressedRoutineState: nextState.routineState,
+        fallbacksApplied: [],
+        reallocatedTasksCount: nextState.tasks.length,
+        departurePreserved: true,
+        familyPreserved: true,
+        tradingGovernanceStatus: 'ELIGIBLE',
+        nextAction: {
+          phaseTitle: nextAction.phaseTitle,
+          phaseDesc: nextAction.phaseDesc,
+          currentTaskTitle: nextAction.currentTask?.title,
+          timeRemainingStr: nextAction.timeRemainingStr,
+        },
+        message: allocation.scheduleProposal
+          ? 'Execution drift detected; host schedule change proposed to HOS and Daily Operating Plan retained.'
+          : 'Execution drift recovered autonomously inside HOS-approved execution boundaries.',
+      },
+      events: [event],
+    };
+  }
+
   if (!isMaterialDeviation) {
     const nextAction = getAutonomousNextAction(nextState);
     return {
