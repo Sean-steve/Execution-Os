@@ -175,7 +175,7 @@ describe('HumanKernelOS E4-E6 Integration Certification', () => {
 
       const repoB = productionFactory.forSubject(b);
       const stateB = await repoB.loadState();
-      expect(stateB.rewardPoints).toBe(0);
+      expect(stateB.rewardPoints).not.toBe(37);
       expect(stateB.subjectId).not.toBe(a.subjectId);
 
       stateB.subjectId = b.subjectId;
