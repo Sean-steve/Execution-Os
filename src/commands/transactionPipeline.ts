@@ -51,7 +51,7 @@ import {
 } from './commands';
 import { HumanPerformanceEngine } from '../services/performanceEngine';
 import { evaluateRoutineState } from '../services/routineEngine';
-import { calculateDynamicAllocations, PROTECTED_FAMILY_START, PROTECTED_FAMILY_END } from '../services/allocationEngine';
+import { calculateDynamicAllocations } from '../services/allocationEngine';
 import { scanAndResolveDeviations } from '../services/deviationEngine';
 import { getAutonomousNextDecision } from '../services/decisionEngine';
 import { checkTaskDependencies } from '../services/dependencyEngine';
