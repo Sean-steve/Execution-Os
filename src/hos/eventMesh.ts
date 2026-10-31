@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { SystemEvent } from '../types';
 import { IDeadLetterQueue, defaultDeadLetterQueue } from '../services/deadLetterQueue';
 import { HOSSubjectContext } from './identityBridge';
+import { IHOSBoundaryStore, MemoryHOSBoundaryStore } from './boundaryStore';
 
 export interface HOSEventEnvelope {
   id: string;
@@ -100,14 +101,11 @@ export function mapExecutionEventToHOS(event: SystemEvent, subject: HOSSubjectCo
 }
 
 export class HOSEventMeshBridge {
-  private processed = new Set<string>();
-  private audit: HOSEventDeliveryAudit[] = [];
-  private dlqContexts = new Map<string, HOSSubjectContext>();
-
   constructor(
     private transport: IHOSEventMeshTransport = new HttpHOSEventMeshTransport(),
     private deadLetterQueue: IDeadLetterQueue = defaultDeadLetterQueue,
-    private maxRetries = 3
+    private maxRetries = 3,
+    private boundaryStore: IHOSBoundaryStore = new MemoryHOSBoundaryStore()
   ) {}
 
   private key(subject: HOSSubjectContext, eventId: string) {
@@ -119,7 +117,7 @@ export class HOSEventMeshBridge {
     if (!mapped) return null;
 
     const key = this.key(subject, event.event_id);
-    if (this.processed.has(key)) {
+    if (this.boundaryStore.hasProcessedEvent(key)) {
       const record: HOSEventDeliveryAudit = {
         eventId: event.event_id,
         hosEventType: mapped.type,
@@ -129,7 +127,7 @@ export class HOSEventMeshBridge {
         attempts: 0,
         lastAttemptAtUtc: new Date().toISOString(),
       };
-      this.audit.unshift(record);
+      this.boundaryStore.addEventAudit(record);
       return record;
     }
 
@@ -139,7 +137,7 @@ export class HOSEventMeshBridge {
       attempts += 1;
       try {
         await this.transport.publish(mapped);
-        this.processed.add(key);
+        this.boundaryStore.markProcessedEvent(key);
         const record: HOSEventDeliveryAudit = {
           eventId: event.event_id,
           hosEventType: mapped.type,
@@ -149,7 +147,7 @@ export class HOSEventMeshBridge {
           attempts,
           lastAttemptAtUtc: new Date().toISOString(),
         };
-        this.audit.unshift(record);
+        this.boundaryStore.addEventAudit(record);
         return record;
       } catch (err: any) {
         lastError = err instanceof Error ? err : new Error(String(err));
@@ -166,7 +164,7 @@ export class HOSEventMeshBridge {
       errorStack: lastError?.stack,
       attempts,
     });
-    this.dlqContexts.set(entry.id, subject);
+    this.boundaryStore.setDLQSubject(entry.id, subject);
     const record: HOSEventDeliveryAudit = {
       eventId: event.event_id,
       hosEventType: mapped.type,
@@ -177,7 +175,7 @@ export class HOSEventMeshBridge {
       lastAttemptAtUtc: new Date().toISOString(),
       error: lastError?.message,
     };
-    this.audit.unshift(record);
+    this.boundaryStore.addEventAudit(record);
     return record;
   }
 
@@ -191,7 +189,7 @@ export class HOSEventMeshBridge {
   }
 
   listAudit(subject?: HOSSubjectContext): HOSEventDeliveryAudit[] {
-    return this.audit
+    return this.boundaryStore.listEventAudit()
       .filter(row => !subject || (row.subjectId === subject.subjectId && row.tenantId === subject.tenantId))
       .slice(0, 500);
   }
@@ -200,7 +198,7 @@ export class HOSEventMeshBridge {
     const entries = await this.deadLetterQueue.list({ consumerName: 'hos-event-mesh' });
     if (!subject) return entries;
     return entries.filter(entry => {
-      const context = this.dlqContexts.get(entry.id);
+      const context = this.boundaryStore.getDLQSubject(entry.id);
       return context?.subjectId === subject.subjectId && context?.tenantId === subject.tenantId;
     });
   }
@@ -208,10 +206,9 @@ export class HOSEventMeshBridge {
   async retryDeadLetter(id: string): Promise<HOSEventDeliveryAudit> {
     const entry = await this.deadLetterQueue.getById(id);
     if (!entry || entry.consumerName !== 'hos-event-mesh') throw new Error(`HOS Event Mesh dead-letter ${id} not found.`);
-    const subject = this.dlqContexts.get(id);
+    const subject = this.boundaryStore.getDLQSubject(id);
     if (!subject) throw new Error(`HOS subject context for dead-letter ${id} is unavailable.`);
 
-    this.processed.delete(this.key(subject, entry.event.event_id));
     const result = await this.publish(entry.event, subject);
     if (!result) throw new Error('Dead-letter event does not map to a HOS Event Mesh event.');
     if (result.status === 'DELIVERED' || result.status === 'SKIPPED_DUPLICATE') {
