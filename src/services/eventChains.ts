@@ -1,7 +1,6 @@
 import { SystemEvent, AppState, RoutineState, SystemMode } from '../types';
 import { createSystemEvent } from './eventBus';
 import { IClock, TestClock } from '../clock';
-import { PROTECTED_FAMILY_START, PROTECTED_FAMILY_END } from './allocationEngine';
 
 export interface EventChainResult {
   chainName: string;
@@ -83,18 +82,17 @@ export class ExecutionEventChainService {
         correlationId,
         causationId: evt2.event_id,
         engine: 'AllocationEngine',
-        policy: 'ProtectedFamilySanctuaryAndEnergyPolicy',
-        rationale: 'Compressed morning non-essential routine buffers while preserving 16:00-19:30 Protected Family sanctuary.',
+        policy: 'AuthoritativeProtectedCommitmentPolicy',
+        rationale: 'Recomputed flexible execution while preserving authoritative protected commitments.',
         stateDiff: {
           compressedTasksCount: { before: 0, after: 3 },
-          protectedFamilyOverlap: { before: false, after: false },
+          protectedCommitmentOverlap: { before: false, after: false },
         },
       },
       {
         routineState: 'COMPRESSED',
         allocationsCount: 12,
-        protectedFamilyStart: PROTECTED_FAMILY_START,
-        protectedFamilyEnd: PROTECTED_FAMILY_END,
+        protectedCommitmentsPreserved: true,
       },
       { ...state, routineState: 'COMPRESSED' },
       'SYSTEM_KERNEL',
