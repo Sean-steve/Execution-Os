@@ -22,7 +22,7 @@ export const INITIAL_ADAPTATION_PATTERNS: AdaptationPattern[] = [];
 export const INITIAL_ADAPTATION_PROPOSALS: AdaptationProposal[] = [];
 export const INITIAL_REWARDS: Reward[] = [];
 
-export const DEFAULT_APP_STATE: AppState = {
+const EMPTY_EXECUTION_STATE_TEMPLATE: AppState = {
   currentMode: 'GREEN',
   dayType: 'STANDARD',
   routineState: 'STANDARD',
@@ -142,3 +142,10 @@ export const DEFAULT_APP_STATE: AppState = {
   conflictLog: [],
   notifications: [],
 };
+
+
+export function createEmptyExecutionState(): AppState {
+  return JSON.parse(JSON.stringify(EMPTY_EXECUTION_STATE_TEMPLATE));
+}
+
+export const DEFAULT_APP_STATE: AppState = createEmptyExecutionState();
