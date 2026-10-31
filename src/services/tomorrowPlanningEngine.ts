@@ -14,7 +14,8 @@ import {
   SystemEvent
 } from '../types';
 import { IClock, getClockForState, formatMinutesTo12Hour, parseTimeToMinutes } from '../clock';
-import { calculateDynamicAllocations, PROTECTED_FAMILY_START, PROTECTED_FAMILY_END } from './allocationEngine';
+import { calculateDynamicAllocations } from './allocationEngine';
+import { STANDALONE_FAMILY_START as PROTECTED_FAMILY_START, STANDALONE_FAMILY_END as PROTECTED_FAMILY_END } from '../data/standalonePolicyFixture';
 import { evaluateRoutineState } from './routineEngine';
 import { getFallbackPolicyForTask, selectOptimalFallbackTier } from './fallbackEngine';
 import { createSystemEvent } from './eventBus';
@@ -26,8 +27,8 @@ export const NIGHT_SHUTDOWN_TIME_MINUTES = 1320;      // 22:00 (10:00 PM)
 
 /**
  * Tomorrow Planning Engine
- * First-class engine that computes deterministic feasibility, predicts execution modes,
- * instantiates tomorrow's day from blueprint intent, and executes autonomous late wake recovery.
+ * In HOS_DELEGATED mode it consumes the host Daily Operating Plan and never invents whole-person policy.
+ * The legacy standalone branch below remains a compatibility fixture for standalone tests/UI.
  */
 
 /**
