@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { DEFAULT_APP_STATE } from '../data/defaultData';
+import { LEGACY_STANDALONE_FIXTURE_STATE } from './fixtures/legacyStandaloneProfile';
 import { AppState, RoutineTask, AdaptationProposal, SystemEvent } from '../types';
 import { evaluateRoutineState } from '../services/routineEngine';
 import { scanAndResolveDeviations } from '../services/deviationEngine';
@@ -38,7 +38,7 @@ describe('Sprint 12: Full Execution OS Production Acceptance (EOS-000 through EO
   let state: AppState;
 
   beforeEach(() => {
-    state = JSON.parse(JSON.stringify(DEFAULT_APP_STATE));
+    state = JSON.parse(JSON.stringify(LEGACY_STANDALONE_FIXTURE_STATE));
     defaultObservability.clear();
     defaultTracing.clear();
     defaultMetrics.reset();
