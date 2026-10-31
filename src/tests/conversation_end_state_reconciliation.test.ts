@@ -153,6 +153,61 @@ describe('Conversation end-state reconciliation acceptance', () => {
     expect(tuesday?.confidence).toBe('STRONG');
   });
 
+  it('HEE-011 resolves guided activities to their semantic protocols, not merely their shared environment', () => {
+    const state = structuredClone(DEFAULT_APP_STATE);
+    const engine = new HumanPerformanceEngine(mutableClock());
+
+    const cases = [
+      { action: 'WORKOUT_TRACKER', protocol: 'protocol-workout-v1' },
+      { action: 'MEDITATION_TIMER', protocol: 'protocol-meditation-v1' },
+      { action: 'TRADING_GATEKEEPER', protocol: 'protocol-trading-v1' },
+      { action: 'FAMILY_OUTING', protocol: 'protocol-family-v1' },
+    ] as const;
+
+    for (const entry of cases) {
+      const task = state.tasks.find(t => t.interactiveActionType === entry.action);
+      expect(task, `Expected a default task for ${entry.action}`).toBeDefined();
+      if (!task) continue;
+      const session = engine.createSession(state, task.id);
+      expect(session.protocolId).toBe(entry.protocol);
+    }
+  });
+
+  it('HEE-003 owns HEE-011 extension scheduling and never moves a protected commitment', () => {
+    const state = structuredClone(DEFAULT_APP_STATE);
+    const task = state.tasks.find(t => t.interactiveActionType === 'FOCUS_BLOCK') || state.tasks[0];
+    const protectedTask = state.tasks.find(t => t.id !== task.id && (t.isProtected || t.interactiveActionType === 'FAMILY_OUTING'))!;
+    expect(protectedTask).toBeDefined();
+
+    task.allocatedStartMinutes = 500;
+    task.allocatedEndMinutes = 600;
+    protectedTask.allocatedStartMinutes = 610;
+    protectedTask.allocatedEndMinutes = 700;
+
+    const engine = new HumanPerformanceEngine(mutableClock());
+    const session = engine.createSession(state, task.id);
+    state.performanceSessions = [session];
+
+    const denied = engine.requestExtension(state, session, 30, 'Need more time for the active objective.');
+    expect(denied.approved).toBe(false);
+    const protectedAfterDenied = denied.updatedState.tasks.find(t => t.id === protectedTask.id)!;
+    expect(protectedAfterDenied.allocatedStartMinutes).toBe(610);
+
+    const safeState = structuredClone(state);
+    const safeProtected = safeState.tasks.find(t => t.id === protectedTask.id)!;
+    safeProtected.allocatedStartMinutes = 800;
+    safeProtected.allocatedEndMinutes = 900;
+    const safeSession = engine.createSession(safeState, task.id);
+    safeState.performanceSessions = [safeSession];
+
+    const approved = engine.requestExtension(safeState, safeSession, 30, 'Need more time for the active objective.');
+    expect(approved.approved).toBe(true);
+    const extendedTask = approved.updatedState.tasks.find(t => t.id === task.id)!;
+    expect(extendedTask.allocatedEndMinutes).toBe(630);
+    const protectedAfterApproved = approved.updatedState.tasks.find(t => t.id === protectedTask.id)!;
+    expect(protectedAfterApproved.allocatedStartMinutes).toBe(800);
+  });
+
   it('AI Execution Partner stays session-scoped and cannot silently mutate the execution state', async () => {
     const state = structuredClone(DEFAULT_APP_STATE);
     const task = state.tasks.find(t => t.interactiveActionType === 'FOCUS_BLOCK') || state.tasks[0];
