@@ -192,7 +192,7 @@ describe('EOS-004 — Backend Service & API Architecture', () => {
 
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe('GOVERNANCE_DENIED');
-    expect(res.body.error.message).toContain('Protected Family block');
+    expect(res.body.error.message).toContain('Protected Commitment Violation');
   });
 
   it('enforces Trading Gatekeeper (TRADING_GATE_CLOSED / DEPENDENCY_BLOCKED)', async () => {
