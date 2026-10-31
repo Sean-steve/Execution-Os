@@ -21,7 +21,6 @@ import {
   Undo2,
   Lock,
   ChevronRight,
-  Database,
   RefreshCw
 } from 'lucide-react';
 import { 
@@ -39,7 +38,6 @@ import {
   retainAdaptationProposal,
   measureAdaptationPerformance,
   scanLongitudinalAdaptations,
-  generateLongitudinalExecutionHistory,
   getHistoricalDataForWindow
 } from '../services/adaptationEngine';
 import { getActiveDayTheme } from '../services/dayThemeService';
@@ -110,20 +108,6 @@ export const AdaptationProposalsView: React.FC<AdaptationProposalsViewProps> = (
     }, 400);
   };
 
-  const handleSeedHistory = (days: number = 90) => {
-    onUpdateState(prev => {
-      const seeded = generateLongitudinalExecutionHistory(days);
-      const nextState = { ...prev, historicalDays: seeded };
-      const scanResult = scanLongitudinalAdaptations(nextState, selectedWindow);
-      return {
-        ...nextState,
-        adaptationPatterns: scanResult.patterns,
-        adaptationProposals: scanResult.proposals
-      };
-    });
-    sound.playChime('success');
-  };
-
   const handleApprove = (proposalId: string) => {
     sound.playChime('success');
     onUpdateState(prev => applyAdaptationProposal(prev, proposalId, 'USER'));
@@ -182,15 +166,6 @@ export const AdaptationProposalsView: React.FC<AdaptationProposalsViewProps> = (
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => handleSeedHistory(90)}
-              className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono font-bold flex items-center gap-1.5 border border-slate-700 transition-colors"
-              title="Seed 90 days of realistic longitudinal execution history"
-            >
-              <Database className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Seed 90d History</span>
-            </button>
-
             <button
               onClick={handleScan}
               disabled={isScanning}
