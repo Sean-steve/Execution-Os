@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { createApp } from '../server/createApp';
 import { HOSIdentityAssertion, HOSIdentityBridge, HOSSubjectContext } from '../hos/identityBridge';
-import { IHOSRepositoryFactory } from '../hos/repositoryFactory';
+import { IHOSRepositoryFactory, HOSSubjectScopedRepositoryFactory } from '../hos/repositoryFactory';
 import { InMemoryExecutionRepository } from '../repositories/implementations';
 import { IExecutionRepository } from '../repositories';
 import { createEmptyExecutionState } from '../data/defaultData';
@@ -143,6 +146,44 @@ describe('HumanKernelOS E4-E6 Integration Certification', () => {
     expect(signed.body.data.tenantId).toBe('tenant-hos');
   });
 
+  it('E4: normal HOS subjects cannot bypass the engine adapter through legacy HEE routes', async () => {
+    const assertion = assertionFor('hos-user-alpha');
+    const res = await request(app)
+      .get('/api/v1/hee/execution/now')
+      .set(headersFor(assertion));
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('AUTHORIZATION_FAILED');
+    expect(res.body.message).toMatch(/capability contract/i);
+  });
+
+  it('E4: production repository factory isolates canonical state by HOS tenant and subject', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'execution-os-hos-e4-'));
+    try {
+      const productionFactory = new HOSSubjectScopedRepositoryFactory(tempDir);
+      const aAssertion = assertionFor('subject-a', ALL_PERMISSIONS, ALL_CONSENT, 'tenant-a');
+      const bAssertion = assertionFor('subject-b', ALL_PERMISSIONS, ALL_CONSENT, 'tenant-a');
+      const a = contextFor(aAssertion);
+      const b = contextFor(bAssertion);
+
+      const repoA = productionFactory.forSubject(a);
+      const stateA = await repoA.loadState();
+      stateA.subjectId = a.subjectId;
+      stateA.tenantId = a.tenantId;
+      stateA.rewardPoints = 37;
+      await repoA.saveState(stateA);
+
+      const repoB = productionFactory.forSubject(b);
+      const stateB = await repoB.loadState();
+
+      expect(stateB.rewardPoints).toBe(0);
+      expect(stateB.subjectId).not.toBe(a.subjectId);
+      expect(fs.readdirSync(tempDir).filter(name => name.endsWith('.json')).length).toBeGreaterThanOrEqual(2);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('E4: Execution OS cannot mint standalone identity tokens while HOS is authoritative', async () => {
     const assertion = assertionFor('hos-user-alpha', [...ALL_PERMISSIONS, 'execution.legacy.api']);
     const res = await request(app)
@@ -201,6 +242,32 @@ describe('HumanKernelOS E4-E6 Integration Certification', () => {
     expect(scheduleA.body.data.data.plan.planId).toBe('dop-a-1');
     expect(scheduleB.status).toBe(200);
     expect(scheduleB.body.data.data.plan).toBeNull();
+  });
+
+  it('E5: capability permissions and consent are both enforced by the HOS adapter', async () => {
+    const noPermission = assertionFor(
+      'hos-no-permission',
+      ALL_PERMISSIONS.filter(permission => permission !== 'execution.schedule.read'),
+      ALL_CONSENT
+    );
+    const deniedPermission = await request(app)
+      .post('/api/v1/hos/capabilities/schedule.get')
+      .set(headersFor(noPermission))
+      .send({});
+    expect(deniedPermission.status).toBe(403);
+    expect(deniedPermission.body.code).toBe('AUTHORIZATION_FAILED');
+
+    const noConsent = assertionFor(
+      'hos-no-consent',
+      ALL_PERMISSIONS,
+      ALL_CONSENT.filter(scope => scope !== 'execution.analytics')
+    );
+    const deniedConsent = await request(app)
+      .post('/api/v1/hos/capabilities/discipline.score.get')
+      .set(headersFor(noConsent))
+      .send({});
+    expect(deniedConsent.status).toBe(403);
+    expect(deniedConsent.body.code).toBe('AUTHORIZATION_FAILED');
   });
 
   it('E5: lifecycle pause blocks execution capabilities until HOS resumes the engine', async () => {
@@ -355,6 +422,41 @@ describe('HumanKernelOS E4-E6 Integration Certification', () => {
 
     expect(denied.status).toBe(400);
     expect(denied.body.message).toMatch(/not delegated by HOS plan/i);
+  });
+
+  it('E6: Event Mesh retries a transient delivery failure and succeeds without dead-lettering', async () => {
+    class FlakyTransport implements IHOSEventMeshTransport {
+      attempts = 0;
+      published: any[] = [];
+      async publish(event: any): Promise<void> {
+        this.attempts += 1;
+        if (this.attempts === 1) throw new Error('transient mesh fault');
+        this.published.push(event);
+      }
+    }
+
+    const flaky = new FlakyTransport();
+    const dlq = new MemoryDeadLetterQueue();
+    const retryBridge = new HOSEventMeshBridge(flaky, dlq, 2);
+    const assertion = assertionFor('hos-retry-user');
+    const subject = contextFor(assertion);
+    const event: SystemEvent = {
+      event_id: 'evt-retry-1',
+      event_type: 'ActivityStarted',
+      event_version: '1.0.0',
+      occurred_at: new Date().toISOString(),
+      actor: 'SYSTEM_KERNEL',
+      subject: 'activity-1',
+      scope: 'EXECUTION',
+      payload: { taskId: 'activity-1' },
+      metadata: { currentMinutes: 0, mode: 'GREEN', routineState: 'STANDARD' },
+    };
+
+    const result = await retryBridge.publish(event, subject);
+    expect(result?.status).toBe('DELIVERED');
+    expect(result?.attempts).toBe(2);
+    expect(flaky.published).toHaveLength(1);
+    expect(await retryBridge.listDeadLetters(subject)).toHaveLength(0);
   });
 
   it('E6: Event Mesh delivery deduplicates repeated events', async () => {
