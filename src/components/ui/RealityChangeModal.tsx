@@ -17,10 +17,9 @@ import {
 import { AccessibleModal } from './AccessibleModal';
 import { AppState, RoutineTask } from '../../types';
 import { formatMinutesToTime, getCurrentTimeMinutes } from '../../services/storageService';
-import { scanAndResolveDeviations } from '../../services/deviationEngine';
 import { sound } from '../../services/soundService';
-import { logEventToState } from '../../services/eventBus';
 import confetti from 'canvas-confetti';
+import { defaultApplicationService } from '../../services/executionApplicationService';
 
 interface RealityChangeModalProps {
   isOpen: boolean;
@@ -74,160 +73,125 @@ export const RealityChangeModal: React.FC<RealityChangeModalProps> = ({
     onClose();
   };
 
-  const handleApplyAdjustment = () => {
+  const handleApplyAdjustment = async () => {
+    if (!selectedOption) return;
     setIsProcessing(true);
     sound.playChime('start');
 
-    setTimeout(() => {
-      let headline = 'DAY ADJUSTED';
-      let changes: { title: string; changeText: string; isProtected?: boolean }[] = [];
-      let recoveryMessage = 'Nothing critical was lost.';
+    let workingState = state;
+    let headline = 'DAY ADJUSTED';
+    const changes: { title: string; changeText: string; isProtected?: boolean }[] = [];
+    let recoveryMessage = 'Nothing critical was lost.';
 
-      onUpdateState(prev => {
-        let nextState: AppState = { ...prev };
-        const nowMins = getCurrentTimeMinutes(nextState);
+    if (selectedOption === 'RUNNING_LATE') {
+      headline = `SCHEDULE SHIFTED (+${minutesLate}m)`;
+      const futureTasks = workingState.tasks
+        .filter(t => !t.completed && (t.allocatedStartMinutes ?? t.startMinutes) >= currentMinutes)
+        .sort((a, b) => (a.allocatedStartMinutes ?? a.startMinutes) - (b.allocatedStartMinutes ?? b.startMinutes));
 
-        if (selectedOption === 'RUNNING_LATE') {
-          headline = `SCHEDULE SHIFTED (+${minutesLate}m)`;
-          // Shift uncompleted tasks
-          const updatedTasks = nextState.tasks.map(t => {
-            if (!t.completed && (t.allocatedStartMinutes ?? t.startMinutes) >= nowMins) {
-              const isFamily = t.id === 'task-family-life' || t.anchorId === 'ANCHOR_8_HUMAN_LIFE';
-              if (isFamily) {
-                // Keep family strictly protected
-                changes.push({
-                  title: t.title,
-                  changeText: `${formatMinutesToTime(t.startMinutes)} 🔒 unchanged`,
-                  isProtected: true,
-                });
-                return t;
-              }
-
-              const newStart = (t.allocatedStartMinutes ?? t.startMinutes) + minutesLate;
-              const newEnd = Math.min((t.allocatedEndMinutes ?? t.endMinutes) + minutesLate, 1320); // cap at 10 PM
-              
-              if (changes.length < 4) {
-                changes.push({
-                  title: t.title,
-                  changeText: `${formatMinutesToTime(t.startMinutes)} → ${formatMinutesToTime(newStart)}`,
-                });
-              }
-
-              return {
-                ...t,
-                allocatedStartMinutes: newStart,
-                allocatedEndMinutes: newEnd,
-              };
-            }
-            return t;
-          });
-
-          nextState.tasks = updatedTasks;
-          nextState.routineState = 'COMPRESSED';
-          nextState.routineChangeReason = `Shifted schedule by ${minutesLate}m due to late arrival.`;
-          recoveryMessage = 'Protected family time and core priorities were preserved.';
-        } else if (selectedOption === 'SOMETHING_CAME_UP' || selectedOption === 'CANNOT_HAPPEN') {
-          headline = 'TASK RESOLVED & SCHEDULE REFLOWED';
-          if (currentTask) {
-            nextState.tasks = nextState.tasks.map(t =>
-              t.id === currentTask.id
-                ? {
-                    ...t,
-                    completed: true,
-                    executionStatus: 'COMPRESSED' as const,
-                    notes: customReason || 'Adjusted due to unexpected event.',
-                  }
-                : t
-            );
-            changes.push({
-              title: currentTask.title,
-              changeText: 'Resolved & bypassed cleanly',
-            });
-          }
-          changes.push({
-            title: 'Family & Evening',
-            changeText: '17:00 🔒 unchanged',
-            isProtected: true,
-          });
-          recoveryMessage = 'Timeline reallocated. Your next priority is queued and ready.';
-        } else if (selectedOption === 'LESS_ENERGY') {
-          headline = 'MINIMUM VIABLE TIERS ACTIVATED';
-          nextState.tasks = nextState.tasks.map(t => {
-            if (!t.completed) {
-              const origDur = t.endMinutes - t.startMinutes;
-              const compressedDur = Math.max(15, Math.floor(origDur * 0.6));
-              return {
-                ...t,
-                allocatedEndMinutes: (t.allocatedStartMinutes ?? t.startMinutes) + compressedDur,
-                fallbackLevel: 1,
-              };
-            }
-            return t;
-          });
-          changes.push({
-            title: 'Deep Work & Build',
-            changeText: 'Compressed to 45m focused burst',
-          });
-          changes.push({
-            title: 'Workout & Movement',
-            changeText: 'Scaled to 15m minimum viable',
-          });
-          changes.push({
-            title: 'Family Sanctuary',
-            changeText: 'Protected 🔒',
-            isProtected: true,
-          });
-          recoveryMessage = 'Workload scaled down to match energy capacity while protecting core momentum.';
-        } else if (selectedOption === 'MORE_TIME') {
-          headline = 'DEEP WORK EXTENDED (+30m)';
-          if (currentTask) {
-            changes.push({
-              title: currentTask.title,
-              changeText: `Extended by 30m of uninterrupted focus`,
-            });
-          }
-          changes.push({
-            title: 'Protected Windows',
-            changeText: 'Safeguarded 🔒',
-            isProtected: true,
-          });
-          recoveryMessage = 'Expanded high-value focus block without breaching afternoon boundaries.';
-        } else {
-          headline = 'SCHEDULE RECALCULATED';
-          changes.push({
-            title: 'Execution Timeline',
-            changeText: 'Realigned automatically',
-          });
-          changes.push({
-            title: 'Family Time',
-            changeText: '17:00 🔒 unchanged',
-            isProtected: true,
-          });
-          recoveryMessage = 'All dependencies satisfied and schedule balanced.';
+      for (const task of futureTasks) {
+        if (task.isProtected || task.interactiveActionType === 'FAMILY_OUTING') {
+          if (changes.length < 4) changes.push({ title: task.title, changeText: 'Protected · unchanged', isProtected: true });
+          continue;
         }
-
-        // Run full deviation scan & resolution
-        nextState = logEventToState(
-          nextState,
-          'ScheduleReallocated',
-          `Reality adjustment: ${selectedOption}`,
-          { option: selectedOption, customReason }
+        const result = await defaultApplicationService.deferActivity(
+          task.id,
+          minutesLate,
+          customReason || 'Running late — reality change',
+          workingState
         );
+        if (result.success && result.state) {
+          workingState = result.state;
+          if (changes.length < 4) changes.push({ title: task.title, changeText: `Deferred ${minutesLate}m` });
+        }
+      }
+      const recalc = await defaultApplicationService.recalculateDay(true, 'Reality change: running late', workingState);
+      if (recalc.success && recalc.state) workingState = recalc.state;
+      recoveryMessage = 'The allocator reflowed flexible work while protected commitments stayed fixed.';
+    } else if (selectedOption === 'SOMETHING_CAME_UP' || selectedOption === 'CANNOT_HAPPEN') {
+      headline = 'TASK BYPASSED & DAY RECALCULATED';
+      if (currentTask) {
+        const result = await defaultApplicationService.overrideActivity({
+          taskId: currentTask.id,
+          overrideType: 'SKIP',
+          reason: customReason || 'Unexpected event prevented execution.',
+          modifications: {
+            completed: false,
+            executionStatus: 'SKIPPED',
+            notes: customReason || 'Skipped through governed reality-change flow.',
+          },
+        }, workingState);
+        if (result.success && result.state) workingState = result.state;
+        changes.push({ title: currentTask.title, changeText: 'Skipped with reason · not counted as completed' });
+      }
+      const recalc = await defaultApplicationService.recalculateDay(true, 'Reality change: activity cannot happen', workingState);
+      if (recalc.success && recalc.state) workingState = recalc.state;
+      recoveryMessage = 'The missed path is explicit; remaining work was replanned instead of pretending completion.';
+    } else if (selectedOption === 'LESS_ENERGY') {
+      headline = 'CAPACITY MODE ADJUSTED';
+      const targetMode = workingState.currentMode === 'GREEN' ? 'YELLOW' : 'RED';
+      const result = await defaultApplicationService.setSystemMode(targetMode, workingState);
+      if (result.success && result.state) workingState = result.state;
+      changes.push({ title: 'Execution capacity', changeText: `${targetMode} mode activated through HEE` });
+      changes.push({ title: 'Protected commitments', changeText: 'Remain protected', isProtected: true });
+      recoveryMessage = 'Capacity was reduced through the routine/allocation engines rather than arbitrary UI compression.';
+    } else if (selectedOption === 'MORE_TIME') {
+      headline = 'TIME EXTENSION EVALUATED';
+      if (currentTask) {
+        let session = (workingState.performanceSessions || []).find(
+          s => s.activityInstanceId === currentTask.id && !['COMPLETED','PARTIAL','ABANDONED','CANCELLED'].includes(s.status)
+        );
+        if (!session) {
+          const created = await defaultApplicationService.execute({
+            type: 'CreatePerformanceSession',
+            payload: { activityInstanceId: currentTask.id },
+          }, workingState);
+          if (created.success && created.state) {
+            workingState = created.state;
+            session = (workingState.performanceSessions || []).find(s => s.id === workingState.activePerformanceSessionId);
+          }
+        }
+        if (session) {
+          const extended = await defaultApplicationService.execute({
+            type: 'RequestPerformanceExtension',
+            payload: {
+              sessionId: session.id,
+              requestedMinutes: 30,
+              reason: customReason || 'User requested more time through reality-change flow.',
+            },
+          }, workingState);
+          if (extended.success && extended.state) {
+            workingState = extended.state;
+            const updated = (workingState.performanceSessions || []).find(s => s.id === session!.id);
+            const decision = updated?.extensionRequests?.slice(-1)[0];
+            changes.push({
+              title: currentTask.title,
+              changeText: decision?.status === 'APPROVED' ? 'Extension approved +30m' : 'Extension denied to protect downstream commitments',
+            });
+          }
+        }
+      }
+      recoveryMessage = 'HEE-011 evaluated the extension against protected commitments.';
+    } else if (selectedOption === 'NEED_TO_LEAVE') {
+      headline = 'EARLY DEPARTURE MODE ACTIVATED';
+      const dayType = await defaultApplicationService.setDayType('EARLY_DEPARTURE', workingState);
+      if (dayType.success && dayType.state) workingState = dayType.state;
+      const recalc = await defaultApplicationService.recalculateDay(true, `Need to leave by ${departureTime}`, workingState);
+      if (recalc.success && recalc.state) workingState = recalc.state;
+      changes.push({ title: 'Day structure', changeText: `Early departure · ${departureTime}` });
+      recoveryMessage = 'The day was recomputed around the departure constraint.';
+    } else {
+      const recalc = await defaultApplicationService.recalculateDay(true, customReason || 'Reality changed', workingState);
+      if (recalc.success && recalc.state) workingState = recalc.state;
+      headline = 'SCHEDULE RECALCULATED';
+      changes.push({ title: 'Execution timeline', changeText: 'Re-evaluated by HEE' });
+      recoveryMessage = 'The system recalculated from authoritative execution state.';
+    }
 
-        const scan = scanAndResolveDeviations(nextState);
-        nextState = scan.updatedState;
-        return nextState;
-      });
-
-      setAdjustmentResult({
-        headline,
-        changes,
-        recoveryMessage,
-      });
-
-      setIsProcessing(false);
-      sound.playChime('success');
-    }, 400);
+    onUpdateState(() => workingState);
+    setAdjustmentResult({ headline, changes, recoveryMessage });
+    setIsProcessing(false);
+    sound.playChime('success');
   };
 
   return (
