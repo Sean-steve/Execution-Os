@@ -597,7 +597,9 @@ export function scanLongitudinalAdaptations(
       latenessTrend: overallOnTimeRate >= 80 ? 'IMPROVING' : 'DEGRADING',
       durationAccuracyPercent: Math.max(60, 100 - Math.round(overallFallbackRate * 1.2)),
       fallbackUsageTrend: overallFallbackRate < 20 ? 'STABLE' : 'DEGRADING',
-      protectedCommitmentIntegrityPercent: 98,
+      protectedCommitmentIntegrityPercent: coverageDays > 0
+        ? Math.round((history.filter(d => !d.protectedCommitmentBreached).length / history.length) * 100)
+        : 0,
     },
   };
 
@@ -654,6 +656,17 @@ export function applyAdaptationProposal(
     }
   }
 
+  const baselineExecs = history.flatMap(d => d.activities).filter(a => a.activityId === targetTaskId);
+  const baselineDurationError = baselineExecs.length
+    ? Math.round(
+        baselineExecs.reduce((sum, e) => sum + Math.abs((e.actualDuration ?? e.plannedDuration) - e.plannedDuration), 0) /
+        baselineExecs.length
+      )
+    : 0;
+
+  // At apply time there is, by definition, no post-change evidence yet.
+  // Keep post metrics neutral and the recommendation in OBSERVING state until
+  // real executions after measurementStartedAt are collected.
   const measurement: AdaptationMeasurement = {
     measurementStartedAt: new Date().toISOString(),
     evaluationWindowDays: 7,
@@ -661,19 +674,19 @@ export function applyAdaptationProposal(
     preAdaptationMetrics: {
       failureRate: preFailureRate,
       onTimeRate: preOnTimeRate,
-      averageDurationErrorMinutes: 18,
+      averageDurationErrorMinutes: baselineDurationError,
       fallbackRate: preFallbackRate,
     },
     postAdaptationMetrics: {
-      failureRate: 0,
-      onTimeRate: 100,
-      averageDurationErrorMinutes: 2,
-      fallbackRate: 0,
+      failureRate: preFailureRate,
+      onTimeRate: preOnTimeRate,
+      averageDurationErrorMinutes: baselineDurationError,
+      fallbackRate: preFallbackRate,
     },
-    isImproved: true,
-    improvementScorePercent: Math.max(25, preFailureRate),
-    recommendation: 'KEEP',
-    lastEvaluatedAt: new Date().toISOString(),
+    isImproved: false,
+    improvementScorePercent: 0,
+    recommendation: 'CONTINUE_MEASURING',
+    status: 'OBSERVING_NO_POST_CHANGE_EVIDENCE',
   };
 
   const updatedProposal: AdaptationProposal = {
