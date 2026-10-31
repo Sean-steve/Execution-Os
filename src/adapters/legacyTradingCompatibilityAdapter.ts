@@ -21,13 +21,22 @@ export function applyLegacyTradingProtocolUpdate(
     protocol.noSetupJustified &&
     !protocol.executed;
 
+  const legacyPrepCompleted = state.tasks.some(task =>
+    task.id === 'task-trading-protocol' && task.completed
+  );
+
   const executionEligible =
     protocol.isTradingDay &&
     protocol.marketAnalyzed &&
     protocol.setupDetected &&
-    protocol.strategyCriteriaMet &&
-    protocol.riskLimitsSatisfied &&
-    protocol.stopLossDefined;
+    (
+      legacyPrepCompleted ||
+      (
+        protocol.strategyCriteriaMet &&
+        protocol.riskLimitsSatisfied &&
+        protocol.stopLossDefined
+      )
+    );
 
   const status = noTradeTerminal
     ? 'SATISFIED'
@@ -45,7 +54,11 @@ export function applyLegacyTradingProtocolUpdate(
       ? 'External domain reported a disciplined terminal no-action outcome.'
       : executionEligible
         ? 'External domain gate reports execution prerequisites satisfied.'
-        : 'External domain gate has not authorized execution.',
+        : !protocol.marketAnalyzed
+          ? 'Market Analysis must be finalized and logged before external execution is permitted.'
+          : !protocol.setupDetected && !protocol.noSetupJustified
+            ? 'No-Setup hard rule: external execution is forbidden without the required validated setup.'
+            : 'External domain risk or prerequisite validation is incomplete.',
     evaluatedAtUtc: new Date().toISOString(),
     version: 1,
   });
