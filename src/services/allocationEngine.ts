@@ -198,3 +198,101 @@ export const calculateDynamicAllocations = (state: AppState): AllocationResult =
     isFeasible: true,
   };
 };
+
+
+export interface PerformanceExtensionAllocationResult {
+  approved: boolean;
+  reason: string;
+  resultingAllocatedEndMinutes?: number;
+  state: AppState;
+}
+
+/**
+ * HEE-003 authoritative evaluation for a HEE-011 request to extend an active performance session.
+ * HEE-011 requests time; the Allocation Engine owns the schedule consequence.
+ */
+export function evaluatePerformanceExtensionAllocation(
+  state: AppState,
+  activityId: string,
+  requestedMinutes: number
+): PerformanceExtensionAllocationResult {
+  const task = state.tasks.find(t => t.id === activityId);
+  if (!task) {
+    return { approved: false, reason: `Activity ${activityId} not found.`, state };
+  }
+
+  const effectiveStart = task.allocatedStartMinutes ?? task.startMinutes;
+  const effectiveEnd = task.allocatedEndMinutes ?? task.endMinutes;
+  const proposedEnd = effectiveEnd + requestedMinutes;
+
+  const conflictingProtected = state.tasks
+    .filter(t =>
+      t.id !== activityId &&
+      !t.completed &&
+      (t.isProtected || isFamilyTask(t) || t.isNonNegotiable) &&
+      (t.allocatedStartMinutes ?? t.startMinutes) >= effectiveEnd &&
+      (t.allocatedStartMinutes ?? t.startMinutes) < proposedEnd
+    )
+    .sort((a, b) => (a.allocatedStartMinutes ?? a.startMinutes) - (b.allocatedStartMinutes ?? b.startMinutes))[0];
+
+  if (conflictingProtected) {
+    const start = conflictingProtected.allocatedStartMinutes ?? conflictingProtected.startMinutes;
+    return {
+      approved: false,
+      reason: `Extension denied: +${requestedMinutes}m would invade protected "${conflictingProtected.title}" at ${start} minutes.`,
+      state,
+    };
+  }
+
+  const updatedTasks = state.tasks.map(t => {
+    if (t.id === activityId) {
+      return {
+        ...t,
+        allocatedEndMinutes: proposedEnd,
+      };
+    }
+
+    const start = t.allocatedStartMinutes ?? t.startMinutes;
+    const end = t.allocatedEndMinutes ?? t.endMinutes;
+    if (
+      !t.completed &&
+      !t.isProtected &&
+      !isFamilyTask(t) &&
+      !t.isNonNegotiable &&
+      start >= effectiveEnd &&
+      start < proposedEnd
+    ) {
+      return {
+        ...t,
+        allocatedStartMinutes: start + requestedMinutes,
+        allocatedEndMinutes: end + requestedMinutes,
+      };
+    }
+    return t;
+  });
+
+  const nextState = { ...state, tasks: updatedTasks };
+  const allocations = state.dynamicAllocations.map(allocation => {
+    const updatedTask = updatedTasks.find(t => t.id === allocation.activityId);
+    if (!updatedTask) return allocation;
+    return {
+      ...allocation,
+      allocatedStartMinutes: updatedTask.allocatedStartMinutes ?? allocation.allocatedStartMinutes,
+      allocatedEndMinutes: updatedTask.allocatedEndMinutes ?? allocation.allocatedEndMinutes,
+      durationMinutes:
+        (updatedTask.allocatedEndMinutes ?? allocation.allocatedEndMinutes) -
+        (updatedTask.allocatedStartMinutes ?? allocation.allocatedStartMinutes),
+      reasonForAdjustment:
+        updatedTask.id === activityId
+          ? `HEE-011 extension approved by HEE-003 (+${requestedMinutes}m).`
+          : allocation.reasonForAdjustment,
+    };
+  });
+
+  return {
+    approved: true,
+    reason: `${requestedMinutes} minutes approved by HEE-003; no protected commitment is invaded.`,
+    resultingAllocatedEndMinutes: proposedEnd,
+    state: { ...nextState, dynamicAllocations: allocations },
+  };
+}
