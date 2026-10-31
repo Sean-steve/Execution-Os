@@ -37,7 +37,8 @@ import {
   RequestPerformanceExtensionCommand,
   ClosePerformanceSessionCommand,
   CancelPerformanceSessionCommand,
-  RedeemRewardCommand
+  RedeemRewardCommand,
+  RecordTradingProtocolCommand
 } from '../../commands/commands';
 import { processAuthoritativeCommand, CommandExecutionOptions } from '../commandPipeline';
 import { GovernanceEngine } from '../governance';
@@ -713,6 +714,21 @@ export function createHeeRouter(repository: IExecutionRepository = defaultExecut
     } catch (err) {
       next(err);
     }
+  });
+
+  /**
+   * POST /api/v1/hee/trading/protocol
+   * Records trading-gate evidence without fabricating task completion.
+   */
+  router.post('/trading/protocol', mutationLimiter, async (req: Request, res: Response, next: NextFunction) => {
+    const protocol = req.body?.protocol || req.body || {};
+    await processAuthoritativeCommand(
+      req,
+      res,
+      next,
+      () => new RecordTradingProtocolCommand({ protocol }),
+      options
+    );
   });
 
   // =========================================================================
