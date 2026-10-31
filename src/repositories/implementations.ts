@@ -19,7 +19,7 @@ import {
   AutonomyLevel
 } from '../types';
 import { RUNTIME_INITIAL_STATE } from '../data/runtimeInitialState';
-import { RUNTIME_INITIAL_STATE } from '../data/defaultData';
+import { DEFAULT_APP_STATE } from '../data/defaultData';
 import {
   IRoutineRepository,
   IActivityRepository,
