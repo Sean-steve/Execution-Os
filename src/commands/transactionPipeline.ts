@@ -46,7 +46,8 @@ import {
   RecordPerformanceEvidenceCommand,
   RequestPerformanceExtensionCommand,
   ClosePerformanceSessionCommand,
-  CancelPerformanceSessionCommand
+  CancelPerformanceSessionCommand,
+  RedeemRewardCommand
 } from './commands';
 import { performanceEngine } from '../services/performanceEngine';
 import { evaluateRoutineState } from '../services/routineEngine';
@@ -589,6 +590,28 @@ export class TransactionPipeline {
           ...state.dailyReview,
           ...command.payload.review,
         };
+      } else if (command instanceof RedeemRewardCommand) {
+        const reward = state.rewards.find(r => r.id === command.payload.rewardId);
+        if (!reward) {
+          throw new Error(`Reward ${command.payload.rewardId} not found.`);
+        }
+        if (reward.redeemed) {
+          throw new Error('Reward has already been redeemed.');
+        }
+        if (state.rewardPoints < reward.pointsRequired && !reward.unlocked) {
+          throw new Error('Insufficient reward points.');
+        }
+        state.rewardPoints = Math.max(0, state.rewardPoints - reward.pointsRequired);
+        state.rewards = state.rewards.map(r =>
+          r.id === reward.id
+            ? { ...r, unlocked: true, redeemed: true, redeemedAt: clock.toISOString() }
+            : r
+        );
+        const evt = createSystemEvent('RewardRedeemed', reward.id, {
+          rewardId: reward.id,
+          pointsSpent: reward.pointsRequired,
+        }, state, 'USER', undefined, clock);
+        createdEvents.push(evt);
       } else if (command instanceof RecordIdentityStatusCommand) {
         state.identityStatus = {
           ...state.identityStatus,
