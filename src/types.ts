@@ -422,6 +422,11 @@ export type EventType =
   | 'AllocationRecalculated'
   | 'AllocationPlanCommitted'
   | 'ScheduleReallocated'
+  | 'ScheduleProposalCreated'
+  | 'ScheduleProposalAccepted'
+  | 'ScheduleProposalRejected'
+  | 'HOSOperatingPlanReceived'
+  | 'ExternalExecutionGateUpdated'
   | 'DependencySatisfied'
   | 'DependencyBroken'
   | 'DependencyChecked'
@@ -1410,6 +1415,81 @@ export interface DayOfWeekPerformanceProfile {
   updatedAtUtc: string;
 }
 
+
+// ==========================================
+// HOS BOUNDARY CONTRACTS — E2/E3
+// ==========================================
+
+export type ExternalGateStatus = 'OPEN' | 'CLOSED' | 'SATISFIED' | 'BLOCKED';
+
+export interface ExternalExecutionGate {
+  id: string;
+  sourceEngine: string;
+  targetActivityId: string;
+  capability?: string;
+  status: ExternalGateStatus;
+  reason?: string;
+  evidenceRef?: string;
+  version?: number;
+  evaluatedAtUtc?: string;
+  expiresAtUtc?: string;
+}
+
+export interface AuthoritativeScheduleCommitment {
+  id: string;
+  title: string;
+  startMinutes: number;
+  endMinutes: number;
+  isProtected: boolean;
+  source: 'HOS' | 'EXTERNAL';
+  sourceRef?: string;
+}
+
+export interface DelegatedExecutionWindow {
+  id: string;
+  startMinutes: number;
+  endMinutes: number;
+  allowedActivityIds?: string[];
+  allowedCategories?: string[];
+  canReallocate: boolean;
+  canCompress: boolean;
+  canDefer: boolean;
+}
+
+export interface HOSDailyOperatingPlan {
+  planId: string;
+  planVersion: string;
+  subjectId: string;
+  localDate: string;
+  timezone: string;
+  source: 'HOS';
+  receivedAtUtc: string;
+  commitments: AuthoritativeScheduleCommitment[];
+  delegatedWindows: DelegatedExecutionWindow[];
+}
+
+export type ScheduleAuthorityMode = 'STANDALONE' | 'HOS';
+
+export interface ScheduleAuthorityContext {
+  mode: ScheduleAuthorityMode;
+  authoritativePlan?: HOSDailyOperatingPlan;
+  lastAcceptedPlanId?: string;
+  lastAcceptedPlanVersion?: string;
+}
+
+export interface ScheduleProposal {
+  id: string;
+  source: 'EXECUTION_OS';
+  authority: 'HOS';
+  planId?: string;
+  planVersion?: string;
+  reason: string;
+  allocations: DynamicAllocation[];
+  status: 'PROPOSED' | 'ACCEPTED' | 'REJECTED' | 'AUTO_APPLIED_WITHIN_DELEGATION';
+  createdAtUtc: string;
+  resolvedAtUtc?: string;
+}
+
 export interface AppState {
   activeDate?: string; // "YYYY-MM-DD"
   timezone?: string; // "UTC", "America/New_York", etc.
@@ -1426,6 +1506,9 @@ export interface AppState {
   dependencies: ActivityDependency[];
   fallbackPolicies: FallbackPolicy[];
   dynamicAllocations: DynamicAllocation[];
+  externalExecutionGates?: ExternalExecutionGate[];
+  scheduleAuthority?: ScheduleAuthorityContext;
+  scheduleProposals?: ScheduleProposal[];
   deviations: DeviationRecord[];
   interventions: InterventionRecord[];
   adaptationPatterns: AdaptationPattern[];
