@@ -55,7 +55,9 @@ import {
 import { CanonicalDatabaseSchema, createEmptyCanonicalSchema } from './canonicalDatabase';
 import { CANONICAL_PERFORMANCE_PROTOCOLS } from '../data/performanceProtocols';
 
-export const DEFAULT_USER_ID = 'user_primary';
+export const STANDALONE_SUBJECT_ID = 'standalone-subject';
+/** @deprecated HOS mode always supplies an explicit subject. */
+export const DEFAULT_USER_ID = STANDALONE_SUBJECT_ID;
 export const DEFAULT_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
 /**
