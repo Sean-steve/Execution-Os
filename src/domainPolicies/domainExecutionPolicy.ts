@@ -11,6 +11,7 @@ export interface DomainExecutionPolicyResult {
 export interface DomainExecutionPolicy {
   id: string;
   appliesTo(state: AppState, taskId: string): boolean;
+  evaluateDependency?(state: AppState, taskId: string): DomainExecutionPolicyResult;
   evaluateStart?(state: AppState, taskId: string): DomainExecutionPolicyResult;
   evaluateCompletion?(state: AppState, taskId: string): DomainExecutionPolicyResult;
 }
@@ -24,6 +25,12 @@ class DomainExecutionPolicyRegistry {
 
   applicable(state: AppState, taskId: string) {
     return this.policies.filter(policy => policy.appliesTo(state, taskId));
+  }
+
+  evaluateDependency(state: AppState, taskId: string): DomainExecutionPolicyResult[] {
+    return this.applicable(state, taskId)
+      .map(policy => policy.evaluateDependency?.(state, taskId) || policy.evaluateStart?.(state, taskId))
+      .filter((result): result is DomainExecutionPolicyResult => Boolean(result));
   }
 
   evaluateStart(state: AppState, taskId: string): DomainExecutionPolicyResult[] {
