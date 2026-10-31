@@ -124,7 +124,7 @@ export class GovernanceEngine {
           allowed: false,
           governanceLevel: 'G2',
           error: new GovernanceDeniedError(
-            `Protected commitment violation: "${task?.title || taskId}" cannot overlap "${conflict.label || conflict.id}" without an explicit governed override.`,
+            `Protected Commitment Violation: "${task?.title || taskId}" cannot overlap "${conflict.label || conflict.id}" without an explicit governed override.`,
             {
               taskId,
               allocatedStart: startMinutes,
