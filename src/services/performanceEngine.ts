@@ -63,9 +63,9 @@ function canonicalPerformanceActivityType(task: RoutineTask): string {
     case 'IDENTITY_CHECK':
       return 'MORNING_LIGHT';
     case 'TRADING_GATEKEEPER':
-      return 'TRADING';
+      return 'EXTERNAL_GATED';
     case 'FAMILY_OUTING':
-      return 'FAMILY';
+      return 'PRESENCE';
     default:
       return task.interactiveActionType || task.category || task.anchorId || 'GENERIC';
   }

@@ -18,7 +18,7 @@ const dimensionLabel: Record<PerformanceDimensionKey, string> = {
   PHYSICAL_EXECUTION: 'Physical',
   RECOVERY_EFFECTIVENESS: 'Recovery',
   PROTECTED_COMMITMENT_INTEGRITY: 'Protected Life',
-  TRADING_DISCIPLINE: 'Trading Discipline',
+  EXTERNAL_POLICY_COMPLIANCE: 'External Policy',
   SCHEDULE_INTEGRITY: 'Schedule',
   LIFE_QUALITY_PROXY: 'Life Quality',
 };

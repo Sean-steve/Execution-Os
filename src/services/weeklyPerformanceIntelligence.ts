@@ -54,7 +54,7 @@ const weekIdFor = (date: string) => `week-${mondayFor(date)}`;
 
 const taskPriorityWeight = (task: any) => {
   if (task.isNonNegotiable || task.isProtected) return 3;
-  if (task.category === 'DEEP_WORK' || task.category === 'BUSINESS' || task.category === 'TRADING') return 2.5;
+  if (task.category === 'DEEP_WORK' || task.category === 'BUSINESS') return 2.5;
   return 1;
 };
 
@@ -68,8 +68,7 @@ export function computePlannedLoadScore(state: AppState): PlannedLoadScore {
     t.category === 'DEEP_WORK' ||
     t.category === 'BUSINESS' ||
     t.interactiveActionType === 'FOCUS_BLOCK' ||
-    t.interactiveActionType === 'COMMAND_CENTER' ||
-    t.interactiveActionType === 'TRADING_GATEKEEPER'
+    t.interactiveActionType === 'COMMAND_CENTER'
   );
   const physical = tasks.filter(t =>
     t.interactiveActionType === 'WORKOUT_TRACKER' ||
@@ -174,7 +173,7 @@ export function buildDailyPerformanceRecord(
     ? (physicalTasks.filter(t => t.completed).length / physicalTasks.length) * 100
     : 100;
 
-  const protectedTasks = tasks.filter(t => t.isProtected || t.interactiveActionType === 'FAMILY_OUTING');
+  const protectedTasks = tasks.filter(t => t.isProtected);
   const protectedIntegrity = protectedTasks.length
     ? (protectedTasks.filter(t => t.completed && t.executionStatus !== 'MISSED_LATE').length / protectedTasks.length) * 100
     : 100;
@@ -183,9 +182,14 @@ export function buildDailyPerformanceRecord(
   const resolved = deviations.filter(d => d.isResolved || d.resolvedAutonomously);
   const recovery = deviations.length ? (resolved.length / deviations.length) * 100 : 100;
 
-  const tradingApplicable = state.tradingProtocol?.isTradingDay === true;
-  const tradingDiscipline = tradingApplicable
-    ? (state.tradingProtocol.closedTerminal && (state.tradingProtocol.executed || state.tradingProtocol.noSetupJustified) ? 100 : 40)
+  const relevantExternalGates = (state.externalExecutionGates || []).filter(gate =>
+    tasks.some(task => task.id === gate.targetActivityId)
+  );
+  const externalPolicyCompliance = relevantExternalGates.length
+    ? (
+        relevantExternalGates.filter(gate => gate.status === 'OPEN' || gate.status === 'SATISFIED').length /
+        relevantExternalGates.length
+      ) * 100
     : null;
 
   const allocated = tasks.filter(t => t.allocatedStartMinutes !== undefined || t.allocatedEndMinutes !== undefined);
@@ -198,14 +202,14 @@ export function buildDailyPerformanceRecord(
       }))
     : executionReliability;
 
-  const familyProtected = protectedIntegrity;
+  const protectedLifeIntegrity = protectedIntegrity;
   const overrunPenalty = sessions.filter(s =>
     s.activeDurationSeconds > Math.max(1, s.targetDurationMinutes) * 60 * 1.25
   ).length * 6;
   const sustainable = clamp(
     outcomeScore * 0.35 +
     recovery * 0.20 +
-    familyProtected * 0.25 +
+    protectedLifeIntegrity * 0.25 +
     scheduleIntegrity * 0.20 -
     overrunPenalty
   );
@@ -215,10 +219,10 @@ export function buildDailyPerformanceRecord(
     dimension('EXECUTION_RELIABILITY', executionReliability, 0.15, eligibleCompleted.length, 'Completed work that remained on-time or validly completed.'),
     dimension('FOCUS_PERFORMANCE', focusPerformance, 0.15, focusSessions.length, 'HEE-011 focus-session outcomes adjusted for interruptions.'),
     dimension('RECOVERY_EFFECTIVENESS', recovery, 0.10, Math.max(1, deviations.length), 'Meaningful outcomes preserved after deviations.'),
-    dimension('PROTECTED_COMMITMENT_INTEGRITY', protectedIntegrity, 0.10, Math.max(1, protectedTasks.length), 'Protected family/commitment integrity.'),
+    dimension('PROTECTED_COMMITMENT_INTEGRITY', protectedIntegrity, 0.10, Math.max(1, protectedTasks.length), 'Authoritative protected-commitment integrity.'),
     dimension('SCHEDULE_INTEGRITY', scheduleIntegrity, 0.08, Math.max(1, allocated.length), 'Actual execution aligned with effective allocations.'),
     dimension('PHYSICAL_EXECUTION', physicalExecution, 0.05, Math.max(1, physicalTasks.length), 'Configured physical commitments completed.'),
-    dimension('TRADING_DISCIPLINE', tradingDiscipline ?? 100, tradingApplicable ? 0.05 : 0, tradingApplicable ? 1 : 0, tradingApplicable ? 'Trading gate discipline and terminal outcome.' : 'Not a trading day.'),
+    dimension('EXTERNAL_POLICY_COMPLIANCE', externalPolicyCompliance ?? 100, relevantExternalGates.length ? 0.05 : 0, relevantExternalGates.length, relevantExternalGates.length ? 'Compliance with external-engine execution gates.' : 'No external policy gate evidence for this day.'),
     dimension('LIFE_QUALITY_PROXY', protectedIntegrity, 0.02, Math.max(1, protectedTasks.length), 'Conservative proxy based on protected-life integrity.'),
   ];
 
@@ -242,7 +246,7 @@ export function buildDailyPerformanceRecord(
 
   return {
     id: `daily-perf-${localDate}`,
-    userId: 'user_primary',
+    userId: (state as any).subjectId || state.scheduleAuthority?.authoritativePlan?.subjectId || 'standalone-subject',
     localDate,
     timezone: state.timezone || 'UTC',
     weekId: weekIdFor(localDate),
@@ -256,7 +260,7 @@ export function buildDailyPerformanceRecord(
     focusPerformanceScore: round(focusPerformance),
     physicalExecutionScore: round(physicalExecution),
     protectedCommitmentIntegrityScore: round(protectedIntegrity),
-    tradingDisciplineScore: tradingDiscipline === null ? null : round(tradingDiscipline),
+    externalPolicyComplianceScore: externalPolicyCompliance === null ? null : round(externalPolicyCompliance),
     recoveryEffectivenessScore: round(recovery),
     scheduleIntegrityScore: round(scheduleIntegrity),
     lifeQualityProxyScore: round(protectedIntegrity),
@@ -284,7 +288,7 @@ function bestDayByDimension(records: DailyPerformanceRecord[]) {
   const out: Partial<Record<PerformanceDimensionKey, string>> = {};
   const dimensions: PerformanceDimensionKey[] = [
     'PRIORITY_WEIGHTED_OUTCOMES','EXECUTION_RELIABILITY','FOCUS_PERFORMANCE','PHYSICAL_EXECUTION',
-    'RECOVERY_EFFECTIVENESS','PROTECTED_COMMITMENT_INTEGRITY','TRADING_DISCIPLINE','SCHEDULE_INTEGRITY','LIFE_QUALITY_PROXY'
+    'RECOVERY_EFFECTIVENESS','PROTECTED_COMMITMENT_INTEGRITY','EXTERNAL_POLICY_COMPLIANCE','SCHEDULE_INTEGRITY','LIFE_QUALITY_PROXY'
   ];
   for (const key of dimensions) {
     let best: { date: string; value: number } | null = null;
@@ -344,13 +348,13 @@ export function buildWeeklyPerformanceRecord(
   const strengths = records.map(r => r.adjustedDayStrength);
   const best = records.length ? [...records].sort((a, b) => b.adjustedDayStrength - a.adjustedDayStrength)[0] : undefined;
   const lowest = records.length ? [...records].sort((a, b) => a.adjustedDayStrength - b.adjustedDayStrength)[0] : undefined;
-  const tradingValues = records.map(r => r.tradingDisciplineScore).filter((v): v is number => v !== null);
+  const externalPolicyValues = records.map(r => r.externalPolicyComplianceScore).filter((v): v is number => v !== null);
   const insights = buildWeeklyInsights(weekId, records);
   const now = new Date().toISOString();
 
   return {
     id: `weekly-perf-${startDate}`,
-    userId: 'user_primary',
+    userId: (state as any).subjectId || state.scheduleAuthority?.authoritativePlan?.subjectId || 'standalone-subject',
     weekId,
     startDate,
     endDate,
@@ -363,7 +367,7 @@ export function buildWeeklyPerformanceRecord(
     protectedCommitmentIntegrity: round(avg(records.map(r => r.protectedCommitmentIntegrityScore))),
     focusPerformance: round(avg(records.map(r => r.focusPerformanceScore))),
     physicalPerformance: round(avg(records.map(r => r.physicalExecutionScore))),
-    tradingDiscipline: tradingValues.length ? round(avg(tradingValues)) : null,
+    externalPolicyCompliance: externalPolicyValues.length ? round(avg(externalPolicyValues)) : null,
     bestDayDate: best?.localDate,
     lowestDayDate: lowest?.localDate,
     bestDayByDimension: bestDayByDimension(records),
@@ -388,7 +392,7 @@ export function buildDayOfWeekPerformanceProfiles(state: AppState): DayOfWeekPer
     const strengths = group.map(r => r.adjustedDayStrength);
     profiles.push({
       id: `weekday-profile-${weekday}`,
-      userId: 'user_primary',
+      userId: (state as any).subjectId || state.scheduleAuthority?.authoritativePlan?.subjectId || 'standalone-subject',
       weekday,
       weekdayLabel: labels[weekday],
       windowStart: group.map(r => r.localDate).sort()[0],

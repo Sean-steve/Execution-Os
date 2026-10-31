@@ -111,8 +111,8 @@ describe('SPRINT 9 — EOS-007 Server-Side Security, Privacy & Governance Bounda
         .send({});
 
       expect(res.status).toBe(422);
-      expect(res.body.code).toBe('TRADING_GATE_CLOSED');
-      expect(res.body.message).toContain('Trading Gatekeeper');
+      expect(res.body.code).toBe('DEPENDENCY_BLOCKED');
+      expect(res.body.message).toContain('Market Analysis');
     });
 
     it('enforces G2 Protected Commitments: rejects non-family activity during Family Block (16:00-19:30)', async () => {
@@ -126,7 +126,7 @@ describe('SPRINT 9 — EOS-007 Server-Side Security, Privacy & Governance Bounda
 
       expect(res.status).toBe(403);
       expect(res.body.code).toBe('GOVERNANCE_DENIED');
-      expect(res.body.message).toContain('Protected Commitment Violation');
+      expect(res.body.message).toContain('Protected commitment');
     });
 
     it('enforces G5 Override Validation: rejects user override without sufficient justification reason', async () => {

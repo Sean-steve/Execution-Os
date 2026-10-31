@@ -45,7 +45,10 @@ import {
   RequestPerformanceExtensionPayload,
   ClosePerformanceSessionPayload,
   CancelPerformanceSessionPayload,
-  RedeemRewardPayload
+  RedeemRewardPayload,
+  SetHOSOperatingPlanPayload,
+  ResolveScheduleProposalPayload,
+  UpsertExternalExecutionGatePayload
 } from './types';
 import { AppState } from '../types';
 
@@ -624,6 +627,42 @@ export class RedeemRewardCommand implements ICommand {
     if (reward.redeemed) return { valid: false, error: 'Reward has already been redeemed.' };
     if (state.rewardPoints < reward.pointsRequired && !reward.unlocked) {
       return { valid: false, error: 'Insufficient reward points.' };
+    }
+    return { valid: true };
+  }
+}
+
+
+export class SetHOSOperatingPlanCommand implements ICommand {
+  readonly type = 'SetHOSOperatingPlan';
+  constructor(public payload: SetHOSOperatingPlanPayload) {}
+  validate() {
+    const plan = this.payload?.plan;
+    if (!plan?.planId || !plan?.planVersion || !plan?.subjectId || !plan?.localDate) {
+      return { valid: false, error: 'HOS Daily Operating Plan requires planId, planVersion, subjectId and localDate.' };
+    }
+    return { valid: true };
+  }
+}
+
+export class ResolveScheduleProposalCommand implements ICommand {
+  readonly type = 'ResolveScheduleProposal';
+  constructor(public payload: ResolveScheduleProposalPayload) {}
+  validate(state: AppState) {
+    const exists = (state.scheduleProposals || []).some(p => p.id === this.payload.proposalId);
+    return exists
+      ? { valid: true }
+      : { valid: false, error: `Schedule proposal ${this.payload.proposalId} not found.` };
+  }
+}
+
+export class UpsertExternalExecutionGateCommand implements ICommand {
+  readonly type = 'UpsertExternalExecutionGate';
+  constructor(public payload: UpsertExternalExecutionGatePayload) {}
+  validate() {
+    const gate = this.payload?.gate;
+    if (!gate?.id || !gate?.sourceEngine || !gate?.targetActivityId || !gate?.status) {
+      return { valid: false, error: 'External gate requires id, sourceEngine, targetActivityId and status.' };
     }
     return { valid: true };
   }

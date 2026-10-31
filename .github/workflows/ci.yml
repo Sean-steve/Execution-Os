@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - 'reconcile/**'
+      - 'hos/**'
   pull_request:
 
 jobs:

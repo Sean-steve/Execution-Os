@@ -28,9 +28,9 @@ export const CommandCenterView: React.FC<CommandCenterViewProps> = ({
   onUpdateState,
 }) => {
   const [victoryAnswer, setVictoryAnswer] = useState(state.victoryQuestionAnswer || '');
-  const [top1, setTop1] = useState(state.tomorrowPlan.top3[0] || 'Scale NFlake core deployment & pipeline');
-  const [top2, setTop2] = useState(state.tomorrowPlan.top3[1] || 'Build Autonomous Personal Execution System');
-  const [top3, setTop3] = useState(state.tomorrowPlan.top3[2] || 'Dedicated family scenic drive & presence');
+  const [top1, setTop1] = useState(state.tomorrowPlan.top3[0] || '');
+  const [top2, setTop2] = useState(state.tomorrowPlan.top3[1] || '');
+  const [top3, setTop3] = useState(state.tomorrowPlan.top3[2] || '');
   const [savedSuccess, setSavedSuccess] = useState(false);
 
   const handleSaveCommand = async (e: React.FormEvent) => {

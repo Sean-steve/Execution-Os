@@ -2,7 +2,9 @@ import { AppState, RoutineTask, FallbackTier } from '../types';
 import { getCurrentTimeMinutes, formatMinutesToTime } from './storageService';
 import { checkTaskDependencies } from './dependencyEngine';
 import { getTaskFallbackTiers } from './fallbackEngine';
-import { calculateDynamicAllocations, PROTECTED_FAMILY_START } from './allocationEngine';
+import { calculateDynamicAllocations } from './allocationEngine';
+import { getAuthoritativeProtectedCommitments } from './scheduleAuthority';
+import { getAutonomousNextDecision as getLegacyAutonomousNextDecision } from '../adapters/legacyStandaloneDecisionEngine';
 
 export interface AutonomousDecisionResult {
   currentTask: RoutineTask | null;
@@ -23,6 +25,10 @@ export interface AutonomousDecisionResult {
  * Answers "WHAT SHOULD I DO NEXT?" with deep contextual awareness and human-readable reasoning.
  */
 export const getAutonomousNextDecision = (state: AppState): AutonomousDecisionResult => {
+  if ((state as any).legacyStandaloneCompatibility) {
+    return getLegacyAutonomousNextDecision(state);
+  }
+
   const currentMinutes = getCurrentTimeMinutes(state);
   const mode = state.currentMode;
   const tasks = state.tasks.filter(t => t.modesAllowed.includes(mode));
@@ -82,41 +88,25 @@ export const getAutonomousNextDecision = (state: AppState): AutonomousDecisionRe
   // Fallback tiers
   const availableFallbackTiers = getTaskFallbackTiers(state, selectedTask.id);
 
-  // Synthesize concise contextual decision explanation
+  // Synthesize concise contextual decision explanation without owning domain policy.
   let decisionReason = '';
-  const isFamilyWindowSoon = currentMinutes >= 900 && currentMinutes < PROTECTED_FAMILY_START;
-  const timeUntilFamily = Math.max(0, PROTECTED_FAMILY_START - currentMinutes);
+  const nextProtected = getAuthoritativeProtectedCommitments(state)
+    .filter(commitment => commitment.startMinutes >= currentMinutes)
+    .sort((a, b) => a.startMinutes - b.startMinutes)[0];
+  const timeUntilProtected = nextProtected
+    ? Math.max(0, nextProtected.startMinutes - currentMinutes)
+    : null;
 
-  if (selectedTask.id === 'task-awaken') {
-    decisionReason = 'Begin the day with sovereign identity reset before digital inputs enter your mind.';
-  } else if (selectedTask.id === 'task-outside-light' || selectedTask.id === 'task-workout-morning') {
-    decisionReason = 'Physical priming unlocks cognitive peak for Deep Work Build. Execute now.';
-  } else if (selectedTask.id === 'task-command-center') {
-    decisionReason = 'Lock Daily Definition of Victory to orient all subsequent builder blocks.';
-  } else if (selectedTask.id === 'task-deep-work-build') {
-    if (isFamilyWindowSoon) {
-      decisionReason = `Engage sprint now: ${timeUntilFamily}m remaining before protected 4:00 PM family presence block.`;
-    } else {
-      decisionReason = 'Command Center parameters locked. This is your primary high-leverage builder block.';
-    }
-  } else if (selectedTask.id === 'task-trading-protocol') {
-    if (state.tradingProtocol.marketAnalyzed && (!state.tradingProtocol.setupDetected || state.tradingProtocol.noSetupJustified)) {
-      decisionReason = 'No Setup = No Trade rule satisfied. Terminal closed; focus shifted entirely to core asset building.';
-    } else {
-      decisionReason = 'Execute objective pre-market analysis with strict risk validation before taking any trade.';
-    }
-  } else if (
-    selectedTask.id === 'task-family-life' || 
-    selectedTask.id === 'task-family-connection' || 
-    selectedTask.id === 'task-dinner-family' ||
-    selectedTask.anchorId === 'ANCHOR_8_HUMAN_LIFE' || 
-    selectedTask.anchorId === 'ANCHOR_9_CONNECT'
-  ) {
-    decisionReason = 'Family presence is a protected high-governance anchor. Phone away, full unhurried attention.';
-  } else if (selectedTask.id === 'task-evening-review' || selectedTask.id === 'task-daily-analysis') {
-    decisionReason = 'Score the 7 Pillars, evaluate Daily Victory, and lock tomorrow blueprint for a clear mind.';
+  if (depCheck.isBlocked) {
+    decisionReason = `Execution is waiting on a dependency or external-domain gate: ${dependencyBlockReason}`;
+  } else if (selectedTask.isProtected) {
+    decisionReason = 'This activity is an authoritative protected commitment. Preserve its execution boundary.';
+  } else if (selectedTask.category === 'RECOVERY') {
+    decisionReason = 'Recovery is the highest-value feasible action under the current execution state.';
+  } else if (timeUntilProtected !== null && timeUntilProtected <= 90) {
+    decisionReason = `Execute the current feasible action within the remaining ${timeUntilProtected}m before protected commitment "${nextProtected!.title}".`;
   } else {
-    decisionReason = `Highest-priority available action in the current ${mode} execution window.`;
+    decisionReason = `Highest-priority feasible action in the current ${mode} execution window.`;
   }
 
   // Compute upcoming task

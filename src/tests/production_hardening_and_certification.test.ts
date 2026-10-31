@@ -208,7 +208,7 @@ describe('Execution OS Final Production Truth Hardening & Certification Suite', 
         .send({});
 
       expect(resTrade.status).toBe(422);
-      expect(resTrade.body.error.code).toBe('TRADING_GATE_CLOSED');
+      expect(resTrade.body.error.code).toBe('DEPENDENCY_BLOCKED');
 
       // Attempt to schedule non-emergency work inside protected family time (16:00 - 19:30 = 960 - 1170)
       const resFamily = await request(app)
@@ -396,7 +396,7 @@ describe('Execution OS Final Production Truth Hardening & Certification Suite', 
         .set('Authorization', `Bearer ${token}`)
         .send({});
       expect(resStep7Blocked.status).toBe(422);
-      expect(resStep7Blocked.body.error.code).toBe('TRADING_GATE_CLOSED');
+      expect(resStep7Blocked.body.error.code).toBe('DEPENDENCY_BLOCKED');
 
       // STEP 8: Record real Trading Prep evidence & complete the protocol gatekeeper
       await request(currentApp)
@@ -405,7 +405,7 @@ describe('Execution OS Final Production Truth Hardening & Certification Suite', 
         .send({});
 
       const resTradingEvidence = await request(currentApp)
-        .post('/api/v1/hee/trading/protocol')
+        .post('/api/v1/hee/compat/legacy-trading/protocol')
         .set('Authorization', `Bearer ${token}`)
         .send({
           protocol: {
@@ -437,7 +437,7 @@ describe('Execution OS Final Production Truth Hardening & Certification Suite', 
 
       // STEP 10: Record executed terminal outcome, then complete Trading Execution
       const resTradeTerminal = await request(currentApp)
-        .post('/api/v1/hee/trading/protocol')
+        .post('/api/v1/hee/compat/legacy-trading/protocol')
         .set('Authorization', `Bearer ${token}`)
         .send({
           protocol: {

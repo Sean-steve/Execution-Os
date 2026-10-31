@@ -464,7 +464,7 @@ export const NowView: React.FC<NowViewProps> = ({
               </>
             ) : (
               <div className="text-sm text-slate-500 mt-0.5">
-                Evening shutdown & protected family time
+                No further execution is scheduled by the active operating plan.
               </div>
             )}
           </div>

@@ -38,12 +38,15 @@ import {
   ClosePerformanceSessionCommand,
   CancelPerformanceSessionCommand,
   RedeemRewardCommand,
-  RecordTradingProtocolCommand
+  RecordTradingProtocolCommand,
+  SetHOSOperatingPlanCommand,
+  ResolveScheduleProposalCommand,
+  UpsertExternalExecutionGateCommand
 } from '../../commands/commands';
 import { processAuthoritativeCommand, CommandExecutionOptions } from '../commandPipeline';
 import { GovernanceEngine } from '../governance';
 import { evaluateRoutineState } from '../../services/routineEngine';
-import { calculateDynamicAllocations, PROTECTED_FAMILY_START, PROTECTED_FAMILY_END } from '../../services/allocationEngine';
+import { calculateDynamicAllocations } from '../../services/allocationEngine';
 import { scanAndResolveDeviations } from '../../services/deviationEngine';
 import { getAutonomousNextDecision } from '../../services/decisionEngine';
 import { checkTaskDependencies } from '../../services/dependencyEngine';
@@ -63,15 +66,16 @@ import { SchemaValidator } from '../validation';
 import { SecurityEngine } from '../security';
 import { requirePermission } from '../auth';
 import { ConflictResolutionRecord, DeviceProfile, SyncQueueItem, LongitudinalWindow } from '../../types';
-import { scanLongitudinalAdaptations, generateLongitudinalExecutionHistory } from '../../services/adaptationEngine';
+import { scanLongitudinalAdaptations } from '../../services/adaptationEngine';
 import { buildDailyPerformanceRecord, buildWeeklyPerformanceRecord, buildDayOfWeekPerformanceProfiles } from '../../services/weeklyPerformanceIntelligence';
 import { performanceAiPartner } from '../../services/performanceAiPartner';
 import { performanceIntegrationHub } from '../../services/performanceIntegrationHub';
+import { getAuthoritativeProtectedCommitments, reconcileAllocationPlanWithAuthority } from '../../services/scheduleAuthority';
+import { evaluateExternalExecutionGates } from '../../services/externalExecutionGate';
 import {
   ValidationError,
   ResourceNotFoundError,
   GovernanceDeniedError,
-  TradingGateClosedError,
   DependencyBlockedError,
   SecurityIntegrityError
 } from '../errors';
@@ -174,7 +178,14 @@ export function createHeeRouter(repository: IExecutionRepository = defaultExecut
         currentTimeMinutes >= a.allocatedStartMinutes && currentTimeMinutes < a.allocatedEndMinutes
       );
 
-      const isTradingBlocked = checkTaskDependencies(state, 'task-trading-execution').isBlocked;
+      const activeExternalGateBlocks = (state.externalExecutionGates || [])
+        .filter(gate => gate.status === 'BLOCKED' || gate.status === 'CLOSED')
+        .map(gate => ({
+          id: gate.id,
+          sourceEngine: gate.sourceEngine,
+          targetActivityId: gate.targetActivityId,
+          reason: gate.reason,
+        }));
 
       res.status(200).json({
         success: true,
@@ -188,7 +199,8 @@ export function createHeeRouter(repository: IExecutionRepository = defaultExecut
           currentTask,
           activeAllocation,
           nextDecision,
-          isTradingBlocked,
+          activeExternalGateBlocks,
+          scheduleAuthority: state.scheduleAuthority?.mode || 'STANDALONE',
           autonomyLevel: state.autonomyLevel,
           rewardPoints: state.rewardPoints,
           version: (state as any).version || 1,
@@ -607,35 +619,15 @@ export function createHeeRouter(repository: IExecutionRepository = defaultExecut
 
   /**
    * GET /api/v1/hee/governance/protected-commitments
+   * Returns protected commitments from the active schedule authority.
    */
   router.get('/governance/protected-commitments', async (_req: Request, res: Response, next: NextFunction) => {
     try {
+      const state = await repository.loadState();
       res.status(200).json({
         success: true,
-        data: {
-          commitments: [
-            {
-              id: 'commitment-family-block',
-              name: 'Protected Family Life Window',
-              startMinutes: PROTECTED_FAMILY_START,
-              endMinutes: PROTECTED_FAMILY_END,
-              startTime: '16:00',
-              endTime: '19:30',
-              strict: true,
-              description: 'Non-negotiable family block — non-family activities are prohibited unless explicit emergency override granted.',
-            },
-            {
-              id: 'commitment-sleep-sanctuary',
-              name: 'Night Sleep Sanctuary',
-              startMinutes: 1350,
-              endMinutes: 330,
-              startTime: '22:30',
-              endTime: '05:30',
-              strict: true,
-              description: 'Mandatory rest window for neuro-biological recovery.',
-            },
-          ],
-        },
+        authority: state.scheduleAuthority?.mode || 'STANDALONE',
+        data: { commitments: getAuthoritativeProtectedCommitments(state) },
       });
     } catch (err) {
       next(err);
@@ -644,14 +636,104 @@ export function createHeeRouter(repository: IExecutionRepository = defaultExecut
 
   /**
    * PATCH /api/v1/hee/governance/protected-commitments
+   * Execution OS cannot mutate HOS-owned personal policy.
    */
-  router.patch('/governance/protected-commitments', async (req: Request, res: Response, next: NextFunction) => {
-    const { commitments } = req.body || {};
-    res.status(200).json({
-      success: true,
-      message: 'Protected commitments updated successfully',
-      data: { updatedCount: (commitments || []).length },
-    });
+  router.patch('/governance/protected-commitments', async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const state = await repository.loadState();
+      if (state.scheduleAuthority?.mode === 'HOS') {
+        return res.status(409).json({
+          success: false,
+          code: 'HOS_POLICY_AUTHORITY_REQUIRED',
+          message: 'Protected commitments are owned by HumanKernelOS. Update the HOS Daily Operating Plan instead.',
+        });
+      }
+      return res.status(409).json({
+        success: false,
+        code: 'NO_POLICY_OWNER_CONNECTED',
+        message: 'Execution OS does not own whole-person protected-commitment policy.',
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // =========================================================================
+  // HOS SCHEDULE AUTHORITY BOUNDARY — E2/E3
+  // =========================================================================
+
+  /**
+   * POST /api/v1/hee/hos/daily-operating-plan
+   * HumanKernelOS supplies the final authoritative daily operating plan.
+   */
+  router.post('/hos/daily-operating-plan', mutationLimiter, async (req: Request, res: Response, next: NextFunction) => {
+    const plan = req.body?.plan || req.body;
+    await processAuthoritativeCommand(
+      req,
+      res,
+      next,
+      () => new SetHOSOperatingPlanCommand({ plan }),
+      options
+    );
+  });
+
+  router.get('/schedule/authority', async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const state = await repository.loadState();
+      res.status(200).json({
+        success: true,
+        data: {
+          authority: state.scheduleAuthority || { mode: 'STANDALONE' },
+          protectedCommitments: getAuthoritativeProtectedCommitments(state),
+        },
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get('/schedule/proposals', async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const state = await repository.loadState();
+      res.status(200).json({ success: true, data: state.scheduleProposals || [] });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post('/schedule/proposals/:id/accept', mutationLimiter, async (req: Request, res: Response, next: NextFunction) => {
+    await processAuthoritativeCommand(
+      req,
+      res,
+      next,
+      () => new ResolveScheduleProposalCommand({ proposalId: req.params.id, decision: 'ACCEPT' }),
+      options
+    );
+  });
+
+  router.post('/schedule/proposals/:id/reject', mutationLimiter, async (req: Request, res: Response, next: NextFunction) => {
+    await processAuthoritativeCommand(
+      req,
+      res,
+      next,
+      () => new ResolveScheduleProposalCommand({ proposalId: req.params.id, decision: 'REJECT' }),
+      options
+    );
+  });
+
+  /**
+   * POST /api/v1/hee/external-gates
+   * Domain engines publish execution eligibility without transferring domain policy ownership.
+   */
+  router.post('/external-gates', mutationLimiter, async (req: Request, res: Response, next: NextFunction) => {
+    const gate = req.body?.gate || req.body;
+    await processAuthoritativeCommand(
+      req,
+      res,
+      next,
+      () => new UpsertExternalExecutionGateCommand({ gate }),
+      options
+    );
   });
 
   // =========================================================================
@@ -687,8 +769,13 @@ export function createHeeRouter(repository: IExecutionRepository = defaultExecut
 
       // 3. Allocations
       const allocationResult = calculateDynamicAllocations(testState);
-      testState.dynamicAllocations = allocationResult.allocations;
-      testState.tasks = allocationResult.recalculatedTasks;
+      const scheduleDecision = reconcileAllocationPlanWithAuthority(
+        testState,
+        allocationResult.allocations,
+        allocationResult.recalculatedTasks,
+        'Simulation allocation proposal'
+      );
+      testState = scheduleDecision.state;
 
       // 4. Decision
       const nextDecision = getAutonomousNextDecision(testState);
@@ -717,10 +804,10 @@ export function createHeeRouter(repository: IExecutionRepository = defaultExecut
   });
 
   /**
-   * POST /api/v1/hee/trading/protocol
-   * Records trading-gate evidence without fabricating task completion.
+   * LEGACY COMPATIBILITY ONLY.
+   * Trading policy is external to Execution OS; this adapter translates old payloads into a generic external gate.
    */
-  router.post('/trading/protocol', mutationLimiter, async (req: Request, res: Response, next: NextFunction) => {
+  router.post('/compat/legacy-trading/protocol', mutationLimiter, async (req: Request, res: Response, next: NextFunction) => {
     const protocol = req.body?.protocol || req.body || {};
     await processAuthoritativeCommand(
       req,
@@ -857,27 +944,6 @@ export function createHeeRouter(repository: IExecutionRepository = defaultExecut
     const proposalId = req.params.id;
     if (!proposalId) return next(new ValidationError('proposalId is required'));
     await processAuthoritativeCommand(req, res, next, () => new RetainAdaptationProposalCommand({ proposalId }), options);
-  });
-
-  /**
-   * POST /api/v1/hee/adaptations/seed-history
-   * Seeds historical execution data across 7, 30, 60, 90 days for testing and verification
-   */
-  router.post('/adaptations/seed-history', async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const days = parseInt(req.body?.days || '90', 10);
-      let state = await repository.loadState();
-      state.historicalDays = generateLongitudinalExecutionHistory(days);
-      await repository.saveState(state);
-
-      res.status(200).json({
-        success: true,
-        message: `Successfully seeded ${days} days of longitudinal execution history`,
-        seededDaysCount: state.historicalDays.length,
-      });
-    } catch (err) {
-      next(err);
-    }
   });
 
   router.post('/proposals/:id/apply', async (req: Request, res: Response, next: NextFunction) => {

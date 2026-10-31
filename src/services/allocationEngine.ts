@@ -1,24 +1,13 @@
-import { AppState, DynamicAllocation, RoutineTask, SystemMode, DayType } from '../types';
+import { AppState, DynamicAllocation, RoutineTask } from '../types';
 import { getCurrentTimeMinutes } from './storageService';
 import { checkTaskDependencies } from './dependencyEngine';
 import { getFallbackPolicyForTask, selectOptimalFallbackTier } from './fallbackEngine';
 import { getWeeklyPerformanceFitModifier } from './weeklyPerformanceIntelligence';
-
-// Protected boundaries (in minutes from midnight)
-export const PROTECTED_FAMILY_START = 960;  // 4:00 PM (16:00)
-export const PROTECTED_FAMILY_END = 1170;   // 7:30 PM (19:30)
-export const EVENING_REVIEW_START = 1200;   // 8:00 PM (20:00)
-export const NIGHT_SHUTDOWN_START = 1320;   // 10:00 PM (22:00)
-
-const isFamilyTask = (task: RoutineTask) => {
-  return task.id === 'task-family-life' || 
-         task.id === 'task-family-connection' || 
-         task.id === 'task-family-outing' || 
-         task.id === 'task-dinner-family' ||
-         task.anchorId === 'ANCHOR_8_HUMAN_LIFE' || 
-         task.anchorId === 'ANCHOR_9_CONNECT' ||
-         task.associatedPillar === 'family';
-};
+import { calculateDynamicAllocations as calculateLegacyDynamicAllocations } from '../adapters/legacyStandaloneAllocationEngine';
+import {
+  getAuthoritativeProtectedCommitments,
+  requestSingleActivityScheduleChange,
+} from './scheduleAuthority';
 
 export interface AllocationResult {
   allocations: DynamicAllocation[];
@@ -28,154 +17,135 @@ export interface AllocationResult {
   isFeasible: boolean;
 }
 
+function overlaps(startA: number, endA: number, startB: number, endB: number) {
+  return startA < endB && endA > startB;
+}
+
+function nextProtectedConflict(state: AppState, start: number, end: number) {
+  return getAuthoritativeProtectedCommitments(state)
+    .filter(c => overlaps(start, end, c.startMinutes, c.endMinutes))
+    .sort((a, b) => a.startMinutes - b.startMinutes)[0];
+}
+
 /**
- * The Central Allocation Engine
- * Dynamically fits remaining uncompleted activities into available time slots
- * while strictly protecting high-governance anchors (Family block, Evening Review).
+ * HEE-003 calculates an execution allocation proposal.
+ * It does not decide whole-person policy and does not own the global schedule.
  */
 export const calculateDynamicAllocations = (state: AppState): AllocationResult => {
+  if ((state as any).legacyStandaloneCompatibility) {
+    return calculateLegacyDynamicAllocations(state);
+  }
+
   const currentMinutes = getCurrentTimeMinutes(state);
   const mode = state.currentMode;
-  const dayType = state.dayType;
   const tasks = [...state.tasks];
-  
-  // Filter tasks allowed in current mode
+
   const allowedTasks = tasks
     .filter(t => (t.modesAllowed || ['GREEN', 'YELLOW', 'RED', 'BLACK']).includes(mode))
     .sort((a, b) => {
       const nominalDiff = a.startMinutes - b.startMinutes;
-      // Preserve broad schedule order. WPI may only influence flexible tasks already near each other.
       if (Math.abs(nominalDiff) > 60 || a.isProtected || b.isProtected || a.isNonNegotiable || b.isNonNegotiable) {
         return nominalDiff;
       }
       const aFit = getWeeklyPerformanceFitModifier(state, a);
       const bFit = getWeeklyPerformanceFitModifier(state, b);
-      const aKey = a.startMinutes - aFit * 2;
-      const bKey = b.startMinutes - bFit * 2;
-      return aKey - bKey;
+      return (a.startMinutes - aFit * 2) - (b.startMinutes - bFit * 2);
     });
 
-  // Determine if we have a deviation from schedule (e.g. waking late or lagging behind)
-  const uncompletedPastScheduled = allowedTasks.filter(
-    t => !t.completed && t.endMinutes < currentMinutes
-  );
-
-  let reallocationReason = 'Nominal schedule active.';
-  let hasScheduleCompression = false;
-
-  if (uncompletedPastScheduled.length > 0) {
-    const minutesLate = currentMinutes - Math.min(...uncompletedPastScheduled.map(t => t.startMinutes));
-    reallocationReason = `Autonomous Reallocation: Time drift of ${minutesLate}m detected. Flexible morning anchors compressed via Fallback tiers; Deep Work shifted to optimal pre-family slot; 4:00 PM Family & Evening Review protected.`;
-    hasScheduleCompression = true;
-  } else if (dayType === 'EARLY_DEPARTURE') {
-    reallocationReason = 'Early Departure Mode: Morning routine compressed into rapid 9:00 AM departure envelope.';
-    hasScheduleCompression = true;
+  if (!allowedTasks.length) {
+    return {
+      allocations: [],
+      recalculatedTasks: [],
+      reallocationReason: 'No executable activities supplied by the current operating plan.',
+      hasScheduleCompression: false,
+      isFeasible: true,
+    };
   }
 
-  let scheduleCursor = Math.max(currentMinutes, 330); // start at current time or 5:30 AM
-  let familyCursor = PROTECTED_FAMILY_START;
+  const uncompletedPastScheduled = allowedTasks.filter(t => !t.completed && t.endMinutes < currentMinutes);
+  const hasScheduleCompression = uncompletedPastScheduled.length > 0;
+  const reallocationReason = hasScheduleCompression
+    ? `Execution drift detected. HEE-003 produced a bounded reallocation proposal from current execution truth.`
+    : 'Nominal execution allocation calculated from supplied operating plan.';
 
+  const minimumStart = Math.min(...allowedTasks.map(t => t.startMinutes));
+  let scheduleCursor = Math.max(currentMinutes, minimumStart);
   const allocations: DynamicAllocation[] = [];
   const recalculatedTasks: RoutineTask[] = [];
+  let feasible = true;
 
   for (const task of allowedTasks) {
     const depCheck = checkTaskDependencies(state, task.id);
     const fallbackPolicy = getFallbackPolicyForTask(state, task.id);
-    
-    // Check if task is protected
-    const isProtected = 
-      task.id === 'task-family-life' || 
-      task.anchorId === 'ANCHOR_8_HUMAN_LIFE' || 
-      task.anchorId === 'ANCHOR_9_CONNECT' ||
-      task.isNonNegotiable && (task.id === 'task-command-center' || task.id === 'task-evening-review');
+    const originalDuration = Math.max(1, task.endMinutes - task.startMinutes);
 
-    if (task.completed) {
-      // Completed tasks stay in their original or recorded time
-      const allocStart = task.allocatedStartMinutes ?? task.startMinutes;
-      const allocEnd = task.allocatedEndMinutes ?? task.endMinutes;
+    if (task.completed || task.isProtected) {
+      const start = task.allocatedStartMinutes ?? task.startMinutes;
+      const end = task.allocatedEndMinutes ?? task.endMinutes;
       allocations.push({
         activityId: task.id,
         instanceId: `inst-${task.id}`,
         title: task.title,
         originalStartMinutes: task.startMinutes,
         originalEndMinutes: task.endMinutes,
-        allocatedStartMinutes: allocStart,
-        allocatedEndMinutes: allocEnd,
-        durationMinutes: allocEnd - allocStart,
-        isCompressed: (allocEnd - allocStart) < (task.endMinutes - task.startMinutes),
+        allocatedStartMinutes: start,
+        allocatedEndMinutes: end,
+        durationMinutes: end - start,
+        isCompressed: end - start < originalDuration,
         isFallback: (task.fallbackLevel || 0) > 0,
         fallbackLevel: task.fallbackLevel || 0,
-        isProtected,
+        isProtected: Boolean(task.isProtected),
         priority: task.isNonNegotiable ? 5 : 3,
-        reasonForAdjustment: task.executionStatus === 'MISSED_LATE' ? 'Completed with Late Penalty' : 'Executed on time',
-        dependencyStatus: 'SATISFIED',
+        reasonForAdjustment: task.isProtected
+          ? 'Authoritative protected commitment preserved.'
+          : 'Historical execution preserved.',
+        dependencyStatus: depCheck.isBlocked ? 'BLOCKED' : 'SATISFIED',
       });
       recalculatedTasks.push(task);
+      if (!task.completed) scheduleCursor = Math.max(scheduleCursor, end);
       continue;
     }
 
-    // Uncompleted task logic
-    let targetStart = task.startMinutes;
-    let targetEnd = task.endMinutes;
-    let standardDuration = task.endMinutes - task.startMinutes;
-    let allocatedDuration = standardDuration;
+    let targetStart = Math.max(scheduleCursor, task.startMinutes);
+    let duration = originalDuration;
+    let fallbackLevel = task.fallbackLevel || 0;
     let isCompressed = false;
-    let fallbackLevel = 0;
-    let adjustmentReason = 'Scheduled nominally';
+    let reason = targetStart === task.startMinutes ? 'Scheduled nominally.' : 'Shifted after preceding execution.';
 
-    if (isFamilyTask(task)) {
-      // Family commitments strictly occupy the 16:00 - 19:30 window
-      targetStart = Math.max(familyCursor, task.startMinutes);
-      allocatedDuration = Math.max(15, standardDuration);
-      targetEnd = targetStart + allocatedDuration;
-      familyCursor = targetEnd + 5;
-      adjustmentReason = 'Protected family commitment strictly preserved.';
-    } else if (task.id === 'task-evening-review' || task.id === 'task-daily-analysis' || task.anchorId === 'ANCHOR_10_REVIEW') {
-      targetStart = Math.max(EVENING_REVIEW_START, scheduleCursor > PROTECTED_FAMILY_END ? scheduleCursor : EVENING_REVIEW_START);
-      allocatedDuration = standardDuration;
-      targetEnd = targetStart + allocatedDuration;
-      adjustmentReason = 'Evening review preserved for 8:00 PM reset.';
-      scheduleCursor = targetEnd + 5;
-    } else {
-      // Work / Routine / Body task
-      targetStart = Math.max(currentMinutes > task.startMinutes ? scheduleCursor : task.startMinutes, scheduleCursor);
-
-      if (targetStart < PROTECTED_FAMILY_START) {
-        const maxAvailable = PROTECTED_FAMILY_START - targetStart;
-        if (maxAvailable <= 10) {
-          // No remaining time before family window: defer to after family block
-          targetStart = Math.max(PROTECTED_FAMILY_END, scheduleCursor);
-          allocatedDuration = standardDuration;
-          targetEnd = targetStart + allocatedDuration;
-          adjustmentReason = 'Work deferred to post-family window to protect 4:00 PM commitment.';
-        } else if (standardDuration > maxAvailable) {
-          if (fallbackPolicy) {
-            const optimalTier = selectOptimalFallbackTier(fallbackPolicy, maxAvailable, mode);
-            allocatedDuration = optimalTier.durationMinutes;
-            fallbackLevel = optimalTier.level;
-            isCompressed = optimalTier.level > 0;
-            adjustmentReason = `Compressed to Fallback Level ${optimalTier.level} (${optimalTier.title}) to protect 4:00 PM Family block.`;
-          } else {
-            allocatedDuration = Math.max(10, maxAvailable);
-            isCompressed = true;
-            adjustmentReason = 'Work compressed to strictly protect 4:00 PM Family commitment.';
-          }
-          targetEnd = Math.min(PROTECTED_FAMILY_START, targetStart + allocatedDuration);
+    let conflict = nextProtectedConflict(state, targetStart, targetStart + duration);
+    if (conflict) {
+      const availableBefore = Math.max(0, conflict.startMinutes - targetStart);
+      if (availableBefore >= 10 && fallbackPolicy) {
+        const tier = selectOptimalFallbackTier(fallbackPolicy, availableBefore, mode);
+        if (tier.durationMinutes <= availableBefore) {
+          duration = tier.durationMinutes;
+          fallbackLevel = tier.level;
+          isCompressed = tier.level > 0 || duration < originalDuration;
+          reason = `Compressed before protected commitment "${conflict.title}".`;
         } else {
-          allocatedDuration = standardDuration;
-          targetEnd = targetStart + allocatedDuration;
+          targetStart = conflict.endMinutes;
+          reason = `Deferred after protected commitment "${conflict.title}".`;
         }
-      } else if (targetStart >= PROTECTED_FAMILY_START && targetStart < PROTECTED_FAMILY_END) {
-        // Encroaching on family block: immediately defer past family block
-        targetStart = PROTECTED_FAMILY_END;
-        allocatedDuration = standardDuration;
-        targetEnd = targetStart + allocatedDuration;
-        adjustmentReason = 'Work shifted past protected family hours.';
       } else {
-        allocatedDuration = standardDuration;
-        targetEnd = targetStart + allocatedDuration;
+        targetStart = conflict.endMinutes;
+        reason = `Deferred after protected commitment "${conflict.title}".`;
       }
-      scheduleCursor = targetEnd + 5;
+    }
+
+    // A second protected block can exist after a defer.
+    conflict = nextProtectedConflict(state, targetStart, targetStart + duration);
+    if (conflict) {
+      targetStart = conflict.endMinutes;
+      reason = `Moved after protected commitment "${conflict.title}".`;
+    }
+
+    const targetEnd = Math.min(1440, targetStart + duration);
+    if (targetEnd <= targetStart) feasible = false;
+
+    const fit = getWeeklyPerformanceFitModifier(state, task);
+    if (fit) {
+      const sign = fit > 0 ? '+' : '';
+      reason += ` Weekly performance fit ${sign}${fit} is advisory only.`;
     }
 
     allocations.push({
@@ -186,18 +156,13 @@ export const calculateDynamicAllocations = (state: AppState): AllocationResult =
       originalEndMinutes: task.endMinutes,
       allocatedStartMinutes: targetStart,
       allocatedEndMinutes: targetEnd,
-      durationMinutes: allocatedDuration,
+      durationMinutes: targetEnd - targetStart,
       isCompressed,
       isFallback: fallbackLevel > 0,
       fallbackLevel,
-      isProtected,
+      isProtected: false,
       priority: task.isNonNegotiable ? 5 : 3,
-      reasonForAdjustment: (() => {
-        const fit = getWeeklyPerformanceFitModifier(state, task);
-        if (!fit) return adjustmentReason;
-        const sign = fit > 0 ? '+' : '';
-        return `${adjustmentReason} Weekly performance fit: ${sign}${fit} (soft HEE-003 signal).`;
-      })(),
+      reasonForAdjustment: reason,
       dependencyStatus: depCheck.isBlocked ? 'BLOCKED' : 'SATISFIED',
     });
 
@@ -207,6 +172,7 @@ export const calculateDynamicAllocations = (state: AppState): AllocationResult =
       allocatedEndMinutes: targetEnd,
       fallbackLevel,
     });
+    scheduleCursor = targetEnd + 5;
   }
 
   return {
@@ -214,10 +180,9 @@ export const calculateDynamicAllocations = (state: AppState): AllocationResult =
     recalculatedTasks,
     reallocationReason,
     hasScheduleCompression,
-    isFeasible: true,
+    isFeasible: feasible,
   };
 };
-
 
 export interface PerformanceExtensionAllocationResult {
   approved: boolean;
@@ -226,92 +191,31 @@ export interface PerformanceExtensionAllocationResult {
   state: AppState;
 }
 
-/**
- * HEE-003 authoritative evaluation for a HEE-011 request to extend an active performance session.
- * HEE-011 requests time; the Allocation Engine owns the schedule consequence.
- */
 export function evaluatePerformanceExtensionAllocation(
   state: AppState,
   activityId: string,
   requestedMinutes: number
 ): PerformanceExtensionAllocationResult {
   const task = state.tasks.find(t => t.id === activityId);
-  if (!task) {
-    return { approved: false, reason: `Activity ${activityId} not found.`, state };
-  }
+  if (!task) return { approved: false, reason: `Activity ${activityId} not found.`, state };
 
-  const effectiveStart = task.allocatedStartMinutes ?? task.startMinutes;
-  const effectiveEnd = task.allocatedEndMinutes ?? task.endMinutes;
-  const proposedEnd = effectiveEnd + requestedMinutes;
+  const start = task.allocatedStartMinutes ?? task.startMinutes;
+  const currentEnd = task.allocatedEndMinutes ?? task.endMinutes;
+  const proposedEnd = Math.min(1440, currentEnd + requestedMinutes);
 
-  const conflictingProtected = state.tasks
-    .filter(t =>
-      t.id !== activityId &&
-      !t.completed &&
-      (t.isProtected || isFamilyTask(t) || t.isNonNegotiable) &&
-      (t.allocatedStartMinutes ?? t.startMinutes) >= effectiveEnd &&
-      (t.allocatedStartMinutes ?? t.startMinutes) < proposedEnd
-    )
-    .sort((a, b) => (a.allocatedStartMinutes ?? a.startMinutes) - (b.allocatedStartMinutes ?? b.startMinutes))[0];
-
-  if (conflictingProtected) {
-    const start = conflictingProtected.allocatedStartMinutes ?? conflictingProtected.startMinutes;
-    return {
-      approved: false,
-      reason: `Extension denied: +${requestedMinutes}m would invade protected "${conflictingProtected.title}" at ${start} minutes.`,
-      state,
-    };
-  }
-
-  const updatedTasks = state.tasks.map(t => {
-    if (t.id === activityId) {
-      return {
-        ...t,
-        allocatedEndMinutes: proposedEnd,
-      };
-    }
-
-    const start = t.allocatedStartMinutes ?? t.startMinutes;
-    const end = t.allocatedEndMinutes ?? t.endMinutes;
-    if (
-      !t.completed &&
-      !t.isProtected &&
-      !isFamilyTask(t) &&
-      !t.isNonNegotiable &&
-      start >= effectiveEnd &&
-      start < proposedEnd
-    ) {
-      return {
-        ...t,
-        allocatedStartMinutes: start + requestedMinutes,
-        allocatedEndMinutes: end + requestedMinutes,
-      };
-    }
-    return t;
-  });
-
-  const nextState = { ...state, tasks: updatedTasks };
-  const allocations = state.dynamicAllocations.map(allocation => {
-    const updatedTask = updatedTasks.find(t => t.id === allocation.activityId);
-    if (!updatedTask) return allocation;
-    return {
-      ...allocation,
-      allocatedStartMinutes: updatedTask.allocatedStartMinutes ?? allocation.allocatedStartMinutes,
-      allocatedEndMinutes: updatedTask.allocatedEndMinutes ?? allocation.allocatedEndMinutes,
-      durationMinutes:
-        (updatedTask.allocatedEndMinutes ?? allocation.allocatedEndMinutes) -
-        (updatedTask.allocatedStartMinutes ?? allocation.allocatedStartMinutes),
-      reasonForAdjustment:
-        updatedTask.id === activityId
-          ? `HEE-011 extension approved by HEE-003 (+${requestedMinutes}m).`
-          : allocation.reasonForAdjustment,
-    };
-  });
+  const decision = requestSingleActivityScheduleChange(
+    state,
+    activityId,
+    start,
+    proposedEnd,
+    `HEE-011 requested +${requestedMinutes} minutes.`,
+    'REALLOCATE'
+  );
 
   return {
-    approved: true,
-    reason: `${requestedMinutes} minutes approved by HEE-003; no protected commitment is invaded.`,
-    resultingAllocatedEndMinutes: proposedEnd,
-    state: { ...nextState, dynamicAllocations: allocations },
+    approved: decision.applied,
+    reason: decision.reason,
+    resultingAllocatedEndMinutes: decision.applied ? proposedEnd : undefined,
+    state: decision.state,
   };
 }

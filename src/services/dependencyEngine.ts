@@ -1,4 +1,6 @@
 import { AppState, RoutineTask, ActivityDependency, DependencyType } from '../types';
+import { evaluateExternalExecutionGates } from './externalExecutionGate';
+import { applyLegacyTradingProtocolUpdate } from '../adapters/legacyTradingCompatibilityAdapter';
 
 export interface DependencyCheckResult {
   isBlocked: boolean;
@@ -19,26 +21,23 @@ export const checkTaskDependencies = (
   const task = state.tasks.find(t => t.id === taskId);
   const activity = state.activities?.find(a => a.id === taskId);
   
-  // If neither task nor activity exists and not a known special task ID
-  if (!task && !activity && taskId !== 'task-trading-execution') {
-    return { isBlocked: false, isSatisfied: true, blockingReasons: [], blockingTaskIds: [] };
-  }
-
   const blockingReasons: string[] = [];
   const blockingTaskIds: string[] = [];
 
-  // Special Hard Rule: Trading Gatekeeper
-  if (taskId === 'task-trading-execution' || taskId === 'task-trading-protocol') {
-    if (state.tradingProtocol.isTradingDay) {
-      if (taskId === 'task-trading-execution' && !state.tradingProtocol.marketAnalyzed) {
-        blockingReasons.push('Market Analysis must be finalized and logged before Trade Execution is permitted.');
-        blockingTaskIds.push('task-trading-protocol');
-      }
-      if (taskId === 'task-trading-execution' && !state.tradingProtocol.setupDetected && !state.tradingProtocol.noSetupJustified) {
-        blockingReasons.push('No-Setup hard rule: trade execution is forbidden without an A+ confluence setup.');
-        blockingTaskIds.push('task-trading-protocol');
-      }
-    }
+  // Domain-neutral boundary: external engines may gate virtual targets that do
+  // not exist as local task definitions. Evaluate gates before local lookup exit.
+  // Legacy standalone fixtures are translated by an isolated compatibility adapter.
+  const gateState = (state as any).legacyStandaloneCompatibility
+    ? applyLegacyTradingProtocolUpdate(state, {})
+    : state;
+  const externalGateCheck = evaluateExternalExecutionGates(gateState, taskId);
+  if (externalGateCheck.isBlocked) {
+    blockingReasons.push(...externalGateCheck.blockingReasons);
+    blockingTaskIds.push(...externalGateCheck.gateIds.map(id => `external-gate:${id}`));
+  }
+
+  if (!task && !activity && blockingReasons.length === 0) {
+    return { isBlocked: false, isSatisfied: true, blockingReasons: [], blockingTaskIds: [] };
   }
 
   // Check defined dependencies

@@ -47,11 +47,14 @@ import {
   RequestPerformanceExtensionCommand,
   ClosePerformanceSessionCommand,
   CancelPerformanceSessionCommand,
-  RedeemRewardCommand
+  RedeemRewardCommand,
+  SetHOSOperatingPlanCommand,
+  ResolveScheduleProposalCommand,
+  UpsertExternalExecutionGateCommand
 } from './commands';
 import { HumanPerformanceEngine } from '../services/performanceEngine';
 import { evaluateRoutineState } from '../services/routineEngine';
-import { calculateDynamicAllocations, PROTECTED_FAMILY_START, PROTECTED_FAMILY_END } from '../services/allocationEngine';
+import { calculateDynamicAllocations } from '../services/allocationEngine';
 import { scanAndResolveDeviations } from '../services/deviationEngine';
 import { getAutonomousNextDecision } from '../services/decisionEngine';
 import { checkTaskDependencies } from '../services/dependencyEngine';
@@ -73,6 +76,9 @@ import {
   measureAdaptationPerformance
 } from '../services/adaptationEngine';
 import { upsertDailyPerformanceRecord, reconcileWeeklyPerformance, generateWeeklyAdaptationRecommendations } from '../services/weeklyPerformanceIntelligence';
+import { reconcileAllocationPlanWithAuthority, requestSingleActivityScheduleChange, acceptHOSDailyOperatingPlan, resolveHOSScheduleProposal } from '../services/scheduleAuthority';
+import { applyLegacyTradingProtocolUpdate } from '../adapters/legacyTradingCompatibilityAdapter';
+import { upsertExternalExecutionGate } from '../services/externalExecutionGate';
 
 /**
  * TransactionPipeline / Command Bus:
@@ -137,7 +143,47 @@ export class TransactionPipeline {
     let failureReason: string | undefined;
 
     try {
-      if (command instanceof PlanTomorrowCommand) {
+      if (command instanceof SetHOSOperatingPlanCommand) {
+        state = acceptHOSDailyOperatingPlan(state, command.payload.plan);
+        createdEvents.push(createSystemEvent(
+          'HOSOperatingPlanReceived',
+          command.payload.plan.planId,
+          {
+            planId: command.payload.plan.planId,
+            planVersion: command.payload.plan.planVersion,
+            subjectId: command.payload.plan.subjectId,
+            localDate: command.payload.plan.localDate,
+            delegatedWindowsCount: command.payload.plan.delegatedWindows.length,
+            commitmentsCount: command.payload.plan.commitments.length,
+          },
+          state,
+          'SYSTEM_KERNEL',
+          undefined,
+          clock
+        ));
+      } else if (command instanceof ResolveScheduleProposalCommand) {
+        state = resolveHOSScheduleProposal(state, command.payload.proposalId, command.payload.decision);
+        createdEvents.push(createSystemEvent(
+          command.payload.decision === 'ACCEPT' ? 'ScheduleProposalAccepted' : 'ScheduleProposalRejected',
+          command.payload.proposalId,
+          { decision: command.payload.decision },
+          state,
+          'GOVERNANCE_GUARD',
+          undefined,
+          clock
+        ));
+      } else if (command instanceof UpsertExternalExecutionGateCommand) {
+        state = upsertExternalExecutionGate(state, command.payload.gate);
+        createdEvents.push(createSystemEvent(
+          'ExternalExecutionGateUpdated',
+          command.payload.gate.id,
+          command.payload.gate,
+          state,
+          'SYSTEM_KERNEL',
+          undefined,
+          clock
+        ));
+      } else if (command instanceof PlanTomorrowCommand) {
         state.tomorrowPlan = {
           ...state.tomorrowPlan,
           ...command.payload.plan,
@@ -220,7 +266,6 @@ export class TransactionPipeline {
               ? {
                   ...t,
                   executionStatus: 'PENDING',
-                  allocatedStartMinutes: currentMinutes,
                 }
               : t
           );
@@ -240,33 +285,10 @@ export class TransactionPipeline {
         const { taskId, executionStatus, missedWindow, penaltyCutPoints, completedAtMinutes } = command.payload;
         const completionTime = completedAtMinutes !== undefined ? completedAtMinutes : currentMinutes;
 
-        // Trading is structurally gated. Completion may never fabricate protocol evidence.
-        if (taskId === 'task-trading-prep' || taskId === 'task-trading-protocol') {
-          const p = state.tradingProtocol;
-          const disciplinedNoTrade = p.marketAnalyzed && p.closedTerminal && p.noSetupJustified && !p.executed;
-          const validSetupPrepared =
-            p.marketAnalyzed &&
-            p.setupDetected &&
-            p.strategyCriteriaMet &&
-            p.riskLimitsSatisfied &&
-            p.stopLossDefined;
-          if (!disciplinedNoTrade && !validSetupPrepared) {
-            throw new Error('TRADING_GATE_CLOSED: Trading preparation cannot complete until analysis produces either a valid setup or a disciplined No Trade terminal outcome.');
-          }
-        }
-        if (taskId === 'task-trading-execution') {
-          const p = state.tradingProtocol;
-          const validExecutedTrade =
-            p.marketAnalyzed &&
-            p.setupDetected &&
-            p.strategyCriteriaMet &&
-            p.riskLimitsSatisfied &&
-            p.stopLossDefined &&
-            p.executed &&
-            p.closedTerminal;
-          if (!validExecutedTrade) {
-            throw new Error('TRADING_GATE_CLOSED: Trading execution cannot complete until a valid executed trade reaches terminal closure.');
-          }
+        // Completion must respect generic dependencies and external-domain execution gates.
+        const completionGate = checkTaskDependencies(state, taskId);
+        if (completionGate.isBlocked) {
+          throw new Error(`EXECUTION_GATE_BLOCKED: ${completionGate.blockingReasons.join('; ')}`);
         }
 
         const task = state.tasks.find(t => t.id === taskId);
@@ -299,10 +321,26 @@ export class TransactionPipeline {
             state.pointsAwardedTasks = [...(state.pointsAwardedTasks || []), taskId];
           }
 
-          // Run allocations to adjust upcoming schedule cursor
+          // Calculate bounded execution reallocations. HOS remains authoritative when connected.
           const allocs = calculateDynamicAllocations(state);
-          state.dynamicAllocations = allocs.allocations;
-          state.tasks = allocs.recalculatedTasks;
+          const scheduleDecision = reconcileAllocationPlanWithAuthority(
+            state,
+            allocs.allocations,
+            allocs.recalculatedTasks,
+            allocs.reallocationReason
+          );
+          state = scheduleDecision.state;
+          if (scheduleDecision.proposal) {
+            createdEvents.push(createSystemEvent(
+              'ScheduleProposalCreated',
+              scheduleDecision.proposal.id,
+              scheduleDecision.proposal,
+              state,
+              'SYSTEM_KERNEL',
+              undefined,
+              clock
+            ));
+          }
 
           const routineEval = evaluateRoutineState(state);
           state.routineState = routineEval.routineState;
@@ -313,106 +351,140 @@ export class TransactionPipeline {
         }
       } else if (command instanceof AdjustActivityCommand) {
         const { taskId, startMinutes, endMinutes } = command.payload;
-        state.tasks = state.tasks.map(t => {
-          if (t.id === taskId) {
-            return {
-              ...t,
-              startMinutes: startMinutes !== undefined ? startMinutes : t.startMinutes,
-              endMinutes: endMinutes !== undefined ? endMinutes : t.endMinutes,
-              allocatedStartMinutes: startMinutes !== undefined ? startMinutes : t.allocatedStartMinutes,
-              allocatedEndMinutes: endMinutes !== undefined ? endMinutes : t.allocatedEndMinutes,
-            };
-          }
-          return t;
-        });
-
-        const allocs = calculateDynamicAllocations(state);
-        state.dynamicAllocations = allocs.allocations;
-        state.tasks = allocs.recalculatedTasks;
-
-        const evt = createSystemEvent('AllocationChanged', taskId, command.payload, state, 'USER', undefined, clock);
-        createdEvents.push(evt);
+        const task = state.tasks.find(t => t.id === taskId);
+        if (task) {
+          const nextStart = startMinutes ?? task.allocatedStartMinutes ?? task.startMinutes;
+          const nextEnd = endMinutes ?? task.allocatedEndMinutes ?? task.endMinutes;
+          const change = requestSingleActivityScheduleChange(
+            state,
+            taskId,
+            nextStart,
+            nextEnd,
+            'User requested an execution schedule adjustment.',
+            'REALLOCATE'
+          );
+          state = change.state;
+          const evt = createSystemEvent(
+            change.applied ? 'AllocationChanged' : 'ScheduleProposalCreated',
+            change.proposal?.id || taskId,
+            { taskId, startMinutes: nextStart, endMinutes: nextEnd, reason: change.reason },
+            state,
+            'USER',
+            undefined,
+            clock
+          );
+          createdEvents.push(evt);
+        }
       } else if (command instanceof AdvanceActivityCommand) {
         const { taskId, minutes, reason } = command.payload;
         const task = state.tasks.find(t => t.id === taskId);
         if (task) {
-          const oldState = { start: task.startMinutes, end: task.endMinutes };
-          state.tasks = state.tasks.map(t =>
-            t.id === taskId
-              ? {
-                  ...t,
-                  startMinutes: Math.max(0, t.startMinutes - minutes),
-                  endMinutes: Math.max(10, t.endMinutes - minutes),
-                }
-              : t
+          const oldStart = task.allocatedStartMinutes ?? task.startMinutes;
+          const oldEnd = task.allocatedEndMinutes ?? task.endMinutes;
+          const nextStart = Math.max(0, oldStart - minutes);
+          const nextEnd = Math.max(nextStart + 1, oldEnd - minutes);
+          const change = requestSingleActivityScheduleChange(
+            state,
+            taskId,
+            nextStart,
+            nextEnd,
+            reason,
+            'REALLOCATE'
           );
+          state = change.state;
           const overrideRecord: UserOverrideRecord = {
             id: `ovr-${Date.now()}`,
             timestamp: clock.toISOString(),
             activityId: taskId,
             overrideType: 'ADVANCE',
             reason,
-            previousState: oldState,
-            newState: { minutesAdvanced: minutes },
+            previousState: { start: oldStart, end: oldEnd },
+            newState: change.applied
+              ? { start: nextStart, end: nextEnd }
+              : { proposalId: change.proposal?.id, proposedStart: nextStart, proposedEnd: nextEnd },
           };
           state.userOverrides = [overrideRecord, ...(state.userOverrides || [])];
-          const evt = createSystemEvent('OverrideCreated', taskId, overrideRecord, state, 'USER', undefined, clock);
-          createdEvents.push(evt);
+          createdEvents.push(createSystemEvent(
+            change.applied ? 'OverrideCreated' : 'ScheduleProposalCreated',
+            change.proposal?.id || taskId,
+            overrideRecord,
+            state,
+            'USER',
+            undefined,
+            clock
+          ));
         }
       } else if (command instanceof DeferActivityCommand) {
         const { taskId, minutes, reason } = command.payload;
         const task = state.tasks.find(t => t.id === taskId);
         if (task) {
-          const oldState = { start: task.startMinutes, end: task.endMinutes };
-          state.tasks = state.tasks.map(t =>
-            t.id === taskId
-              ? {
-                  ...t,
-                  startMinutes: Math.min(1430, t.startMinutes + minutes),
-                  endMinutes: Math.min(1440, t.endMinutes + minutes),
-                }
-              : t
+          const oldStart = task.allocatedStartMinutes ?? task.startMinutes;
+          const oldEnd = task.allocatedEndMinutes ?? task.endMinutes;
+          const nextStart = Math.min(1439, oldStart + minutes);
+          const nextEnd = Math.min(1440, oldEnd + minutes);
+          const change = requestSingleActivityScheduleChange(
+            state,
+            taskId,
+            nextStart,
+            nextEnd,
+            reason,
+            'DEFER'
           );
+          state = change.state;
           const overrideRecord: UserOverrideRecord = {
             id: `ovr-${Date.now()}`,
             timestamp: clock.toISOString(),
             activityId: taskId,
             overrideType: 'DEFER',
             reason,
-            previousState: oldState,
-            newState: { minutesDeferred: minutes },
+            previousState: { start: oldStart, end: oldEnd },
+            newState: change.applied
+              ? { start: nextStart, end: nextEnd }
+              : { proposalId: change.proposal?.id, proposedStart: nextStart, proposedEnd: nextEnd },
           };
           state.userOverrides = [overrideRecord, ...(state.userOverrides || [])];
-          const evt = createSystemEvent('OverrideCreated', taskId, overrideRecord, state, 'USER', undefined, clock);
-          createdEvents.push(evt);
+          createdEvents.push(createSystemEvent(
+            change.applied ? 'OverrideCreated' : 'ScheduleProposalCreated',
+            change.proposal?.id || taskId,
+            overrideRecord,
+            state,
+            'USER',
+            undefined,
+            clock
+          ));
         }
       } else if (command instanceof CompressActivityCommand) {
         const { taskId, targetDurationMinutes, reason, fallbackTierLevel } = command.payload;
-        const targetLevel = fallbackTierLevel !== undefined ? fallbackTierLevel : 1;
-        state.tasks = state.tasks.map(t => {
-          if (t.id === taskId) {
-            const start = t.allocatedStartMinutes || t.startMinutes;
-            return {
-              ...t,
-              endMinutes: start + targetDurationMinutes,
-              allocatedEndMinutes: start + targetDurationMinutes,
-              fallbackLevel: targetLevel,
-              executionStatus: 'COMPRESSED',
-            };
+        const task = state.tasks.find(t => t.id === taskId);
+        if (task) {
+          const start = task.allocatedStartMinutes ?? task.startMinutes;
+          const end = Math.min(1440, start + targetDurationMinutes);
+          const change = requestSingleActivityScheduleChange(
+            state,
+            taskId,
+            start,
+            end,
+            reason,
+            'COMPRESS'
+          );
+          state = change.state;
+          if (change.applied) {
+            const targetLevel = fallbackTierLevel !== undefined ? fallbackTierLevel : 1;
+            state.tasks = state.tasks.map(t => t.id === taskId
+              ? { ...t, fallbackLevel: targetLevel, executionStatus: 'COMPRESSED' }
+              : t
+            );
           }
-          return t;
-        });
-
-        const allocs = calculateDynamicAllocations(state);
-        state.dynamicAllocations = allocs.allocations;
-        state.tasks = allocs.recalculatedTasks.map(t =>
-          t.id === taskId
-            ? { ...t, fallbackLevel: targetLevel, executionStatus: 'COMPRESSED' }
-            : t
-        );
-
-        const evt = createSystemEvent('FallbackTriggered', taskId, { targetDurationMinutes, reason }, state, 'USER', undefined, clock);
-        createdEvents.push(evt);
+          createdEvents.push(createSystemEvent(
+            change.applied ? 'FallbackTriggered' : 'ScheduleProposalCreated',
+            change.proposal?.id || taskId,
+            { targetDurationMinutes, reason, applied: change.applied },
+            state,
+            'USER',
+            undefined,
+            clock
+          ));
+        }
       } else if (command instanceof ReplaceActivityCommand) {
         const { taskId, replacementTaskId, reason } = command.payload;
         const targetTask = state.tasks.find(t => t.id === taskId);
@@ -463,25 +535,38 @@ export class TransactionPipeline {
           createdEvents.push(evt);
         }
       } else if (command instanceof RecalculateDayCommand) {
-        // Run full HEE evaluation pipeline
         const devScan = scanAndResolveDeviations(state);
         state = devScan.updatedState;
 
         const allocs = calculateDynamicAllocations(state);
-        state.dynamicAllocations = allocs.allocations;
-        state.tasks = allocs.recalculatedTasks;
+        const scheduleDecision = reconcileAllocationPlanWithAuthority(
+          state,
+          allocs.allocations,
+          allocs.recalculatedTasks,
+          command.payload.reason || allocs.reallocationReason
+        );
+        state = scheduleDecision.state;
 
         const routineEval = evaluateRoutineState(state);
         state.routineState = routineEval.routineState;
         if (routineEval.reason) state.routineChangeReason = routineEval.reason;
 
         const nextDecision = getAutonomousNextDecision(state);
-        if (nextDecision.decisionReason) {
-          state.lastDecisionReason = nextDecision.decisionReason;
-        }
+        if (nextDecision.decisionReason) state.lastDecisionReason = nextDecision.decisionReason;
 
-        const evt = createSystemEvent('AllocationChanged', 'daySchedule', { currentMinutes, reason: command.payload.reason || 'Recalculate day triggered' }, state, 'SYSTEM_KERNEL', undefined, clock);
-        createdEvents.push(evt);
+        createdEvents.push(createSystemEvent(
+          scheduleDecision.applied ? 'AllocationChanged' : 'ScheduleProposalCreated',
+          scheduleDecision.proposal?.id || 'daySchedule',
+          {
+            currentMinutes,
+            reason: scheduleDecision.reason,
+            proposalId: scheduleDecision.proposal?.id,
+          },
+          state,
+          'SYSTEM_KERNEL',
+          undefined,
+          clock
+        ));
       } else if (command instanceof ApproveDecisionCommand) {
         const { decisionId, optionId } = command.payload;
         state.activeHumanDecision = null;
@@ -505,16 +590,34 @@ export class TransactionPipeline {
       } else if (command instanceof SetSystemModeCommand) {
         state.currentMode = command.payload.mode;
         const allocs = calculateDynamicAllocations(state);
-        state.dynamicAllocations = allocs.allocations;
-        state.tasks = allocs.recalculatedTasks;
-        const evt = createSystemEvent('RoutineChanged', 'mode', { mode: command.payload.mode }, state, 'USER', undefined, clock);
+        const scheduleDecision = reconcileAllocationPlanWithAuthority(
+          state,
+          allocs.allocations,
+          allocs.recalculatedTasks,
+          `Mode changed to ${command.payload.mode}; execution reallocation evaluated.`
+        );
+        state = scheduleDecision.state;
+        const evt = createSystemEvent('RoutineChanged', 'mode', {
+          mode: command.payload.mode,
+          scheduleApplied: scheduleDecision.applied,
+          proposalId: scheduleDecision.proposal?.id,
+        }, state, 'USER', undefined, clock);
         createdEvents.push(evt);
       } else if (command instanceof SetDayTypeCommand) {
         state.dayType = command.payload.dayType;
         const allocs = calculateDynamicAllocations(state);
-        state.dynamicAllocations = allocs.allocations;
-        state.tasks = allocs.recalculatedTasks;
-        const evt = createSystemEvent('RoutineChanged', 'dayType', { dayType: command.payload.dayType }, state, 'USER', undefined, clock);
+        const scheduleDecision = reconcileAllocationPlanWithAuthority(
+          state,
+          allocs.allocations,
+          allocs.recalculatedTasks,
+          `Day type changed to ${command.payload.dayType}; execution reallocation evaluated.`
+        );
+        state = scheduleDecision.state;
+        const evt = createSystemEvent('RoutineChanged', 'dayType', {
+          dayType: command.payload.dayType,
+          scheduleApplied: scheduleDecision.applied,
+          proposalId: scheduleDecision.proposal?.id,
+        }, state, 'USER', undefined, clock);
         createdEvents.push(evt);
       } else if (command instanceof SetSimulatedTimeCommand) {
         state.isSimulatedTime = command.payload.isSimulatedTime;
@@ -591,10 +694,19 @@ export class TransactionPipeline {
         const evt = createSystemEvent('InterventionTriggered', taskId, { penaltyPoints: penalty }, state, 'GOVERNANCE_GUARD', undefined, clock);
         createdEvents.push(evt);
       } else if (command instanceof RecordTradingProtocolCommand) {
-        state.tradingProtocol = {
-          ...state.tradingProtocol,
-          ...command.payload.protocol,
-        };
+        state = applyLegacyTradingProtocolUpdate(state, command.payload.protocol);
+        const gate = (state.externalExecutionGates || []).find(g => g.id === 'legacy-trading-execution-gate');
+        if (gate) {
+          createdEvents.push(createSystemEvent(
+            'ExternalExecutionGateUpdated',
+            gate.id,
+            gate,
+            state,
+            'SYSTEM_KERNEL',
+            undefined,
+            clock
+          ));
+        }
       } else if (command instanceof RecordCompanyOfTheDayCommand) {
         state.companyOfTheDay = {
           ...state.companyOfTheDay,
@@ -659,7 +771,7 @@ export class TransactionPipeline {
         const session = performanceEngine.createSession(state, command.payload.activityInstanceId, {
           environmentType: command.payload.environmentType,
           protocolId: command.payload.protocolId,
-          userId: 'user_primary'
+          userId: (state as any).subjectId || 'standalone-subject'
         });
         state.performanceSessions = [...(state.performanceSessions || []), session];
         state.activePerformanceSessionId = session.id;

@@ -291,9 +291,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </div>
               </div>
 
-              {/* Suite 3: Trading Gatekeeper */}
+              {/* Suite 3: External Execution Gates */}
               <div
-                onClick={() => onNavigateToView('TRADING')}
+                onClick={() => onNavigateToView('SYSTEM')}
                 className="p-5 rounded-2xl bg-white hover:bg-slate-50/80 border border-slate-200 hover:border-slate-300 hover:shadow-md cursor-pointer transition-all space-y-3 group shadow-sm"
               >
                 <div className="flex items-center justify-between">
@@ -304,14 +304,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </div>
                 <div>
                   <h4 className={`text-sm font-bold text-slate-900 group-hover:${activeTheme.classes.accentText} transition-colors`}>
-                    Trading Protocol Gatekeeper
+                    External Execution Gates
                   </h4>
                   <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                    Objective market analysis, strict setup verification, risk limits & "No setup = No trade".
+                    Execution eligibility supplied by connected domain engines without transferring domain policy into Execution OS.
                   </p>
                 </div>
                 <div className={`pt-2 text-xs font-mono font-semibold flex items-center gap-1 ${activeTheme.classes.accentText}`}>
-                  Open Protocol <ArrowRight className="w-3 h-3" />
+                  Open System <ArrowRight className="w-3 h-3" />
                 </div>
               </div>
 

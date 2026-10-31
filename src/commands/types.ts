@@ -282,3 +282,17 @@ export interface CancelPerformanceSessionPayload {
 export interface RedeemRewardPayload {
   rewardId: string;
 }
+
+
+export interface SetHOSOperatingPlanPayload {
+  plan: import('../types').HOSDailyOperatingPlan;
+}
+
+export interface ResolveScheduleProposalPayload {
+  proposalId: string;
+  decision: 'ACCEPT' | 'REJECT';
+}
+
+export interface UpsertExternalExecutionGatePayload {
+  gate: import('../types').ExternalExecutionGate;
+}

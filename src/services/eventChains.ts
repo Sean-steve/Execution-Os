@@ -1,7 +1,6 @@
 import { SystemEvent, AppState, RoutineState, SystemMode } from '../types';
 import { createSystemEvent } from './eventBus';
 import { IClock, TestClock } from '../clock';
-import { PROTECTED_FAMILY_START, PROTECTED_FAMILY_END } from './allocationEngine';
 
 export interface EventChainResult {
   chainName: string;
@@ -83,18 +82,17 @@ export class ExecutionEventChainService {
         correlationId,
         causationId: evt2.event_id,
         engine: 'AllocationEngine',
-        policy: 'ProtectedFamilySanctuaryAndEnergyPolicy',
-        rationale: 'Compressed morning non-essential routine buffers while preserving 16:00-19:30 Protected Family sanctuary.',
+        policy: 'AuthoritativeProtectedCommitmentPolicy',
+        rationale: 'Recomputed flexible execution while preserving authoritative protected commitments.',
         stateDiff: {
           compressedTasksCount: { before: 0, after: 3 },
-          protectedFamilyOverlap: { before: false, after: false },
+          protectedCommitmentOverlap: { before: false, after: false },
         },
       },
       {
         routineState: 'COMPRESSED',
         allocationsCount: 12,
-        protectedFamilyStart: PROTECTED_FAMILY_START,
-        protectedFamilyEnd: PROTECTED_FAMILY_END,
+        protectedCommitmentsPreserved: true,
       },
       { ...state, routineState: 'COMPRESSED' },
       'SYSTEM_KERNEL',
@@ -336,54 +334,51 @@ export class ExecutionEventChainService {
   }
 
   /**
-   * 5. TRADING ELIGIBILITY EVENT CHAIN
-   * PreMarketAnalyzed -> DependencySatisfied -> TradingGateEvaluated -> TradingAuthorized
+   * 5. EXTERNAL EXECUTION GATE EVENT CHAIN
+   * External domain state -> generic gate update -> execution eligibility.
    */
-  createTradingEligibilityChain(isAuthorized: boolean = true): EventChainResult {
-    const correlationId = `corr-trading-gate-${Date.now()}`;
+  createExternalGateEligibilityChain(
+    sourceEngine: string = 'EXTERNAL_DOMAIN',
+    targetActivityId: string = 'external-action',
+    isAuthorized: boolean = true
+  ): EventChainResult {
+    const correlationId = `corr-external-gate-${Date.now()}`;
 
-    // Event 1: Dependency Satisfied (Pre-market analysis completed)
     const evt1 = createSystemEvent(
       'DependencySatisfied',
       {
-        subject: { type: 'dependency', id: 'dep-trading-premarket', title: 'Pre-Market Structure Analysis' },
+        subject: { type: 'dependency', id: `dep-${targetActivityId}`, title: 'External Domain Prerequisite' },
         correlationId,
         engine: 'DependencyEngine',
-        policy: 'TradingGatekeeperPrerequisitesPolicy',
-        rationale: 'Completed daily technical roadmap and levels of interest.',
-        stateDiff: {
-          marketAnalyzed: { before: false, after: true },
-        },
+        policy: 'ExternalExecutionGateContract',
+        rationale: 'Owning domain supplied prerequisite evidence to the execution boundary.',
       },
-      { dependencyId: 'dep-trading-premarket', satisfied: true },
+      { sourceEngine, targetActivityId, prerequisiteEvidenceAvailable: true },
       {},
       'SYSTEM_KERNEL',
       undefined,
       this.clock
     );
 
-    // Event 2: Trading Gate Evaluated caused by Evt 1
     const evt2 = createSystemEvent(
-      'TradingGateEvaluated',
+      'ExternalExecutionGateUpdated',
       {
-        subject: { type: 'gate', id: 'gate-trading-terminal', title: 'Live Capital Execution Gate' },
+        subject: { type: 'gate', id: `gate-${targetActivityId}`, title: 'External Execution Gate' },
         correlationId,
         causationId: evt1.event_id,
-        engine: 'DependencyEngine',
-        policy: 'TradingGatekeeperPrerequisitesPolicy',
+        engine: 'ExternalExecutionGateAdapter',
+        policy: 'ExternalExecutionGateContract',
         rationale: isAuthorized
-          ? 'All 3 prerequisite gates satisfied (Market Analyzed, A+ Setup Verified, Risk Limits defined).'
-          : 'Setup verification incomplete: Live terminal trading remains locked.',
+          ? 'Owning domain authorized bounded execution.'
+          : 'Owning domain has not authorized execution.',
         stateDiff: {
-          tradingAuthorized: { before: false, after: isAuthorized },
+          gateStatus: { before: 'BLOCKED', after: isAuthorized ? 'OPEN' : 'BLOCKED' },
         },
       },
       {
-        isTradingDay: true,
-        marketAnalyzed: true,
-        setupDetected: isAuthorized,
-        riskLimitsSatisfied: true,
-        authorized: isAuthorized,
+        sourceEngine,
+        targetActivityId,
+        status: isAuthorized ? 'OPEN' : 'BLOCKED',
       },
       {},
       'GOVERNANCE_GUARD',
@@ -391,23 +386,19 @@ export class ExecutionEventChainService {
       this.clock
     );
 
-    // Event 3: Trading Authorized (or Blocked) caused by Evt 2
     const evt3 = createSystemEvent(
-      isAuthorized ? 'TradingAuthorized' : 'TradingBlocked',
+      'ExternalExecutionGateUpdated',
       {
-        subject: { type: 'activity', id: 'task-trading-execution', title: 'Trading Execution Terminal' },
+        subject: { type: 'activity', id: targetActivityId, title: 'Bounded External Action' },
         correlationId,
         causationId: evt2.event_id,
-        engine: 'DependencyEngine',
-        policy: 'TradingGatekeeperPrerequisitesPolicy',
+        engine: 'ExecutionBoundary',
+        policy: 'ExternalExecutionGateContract',
         rationale: isAuthorized
-          ? 'Trading terminal unlocked for execution under strict 1% risk limit.'
-          : 'Live terminal execution blocked: Trading Gatekeeper closed.',
-        stateDiff: {
-          terminalLocked: { before: true, after: !isAuthorized },
-        },
+          ? 'Execution boundary confirmed the external authorization.'
+          : 'Execution boundary preserved the external-domain block.',
       },
-      { authorized: isAuthorized, maxRiskPercent: 1.0 },
+      { sourceEngine, targetActivityId, executionEligible: isAuthorized },
       {},
       'GOVERNANCE_GUARD',
       evt2.event_id,
@@ -415,10 +406,21 @@ export class ExecutionEventChainService {
     );
 
     return {
-      chainName: 'Trading Eligibility',
+      chainName: 'External Gate Eligibility',
       correlationId,
       events: [evt1, evt2, evt3],
     };
+  }
+
+  /**
+   * @deprecated Legacy standalone compatibility only. Trading policy belongs to its owning domain.
+   */
+  createTradingEligibilityChain(isAuthorized: boolean = true): EventChainResult {
+    return this.createExternalGateEligibilityChain(
+      'LEGACY_TRADING_COMPATIBILITY_ADAPTER',
+      'task-trading-execution',
+      isAuthorized
+    );
   }
 
   /**
@@ -455,7 +457,7 @@ export class ExecutionEventChainService {
         causationId: evt1.event_id,
         engine: 'GovernanceEngine',
         policy: 'HumanAutonomyAndOverrideGovernancePolicy',
-        rationale: 'Governance evaluated override against Protected Family block (16:00-19:30). Request is within afternoon work block and does not violate family sanctuary.',
+        rationale: 'Governance evaluated the override against authoritative protected commitments and confirmed the requested execution window remains within permitted boundaries.',
         stateDiff: {
           overrideAllowed: { before: false, after: true },
         },
