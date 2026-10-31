@@ -9,6 +9,7 @@ import {
 } from './errors';
 import { SecurityEngine } from './security';
 import { domainExecutionPolicies } from '../domainPolicies';
+import { getProtectedScheduleWindows } from '../services/scheduleAuthorityService';
 
 export interface GovernanceEvaluationResult {
   allowed: boolean;
@@ -23,8 +24,8 @@ export interface GovernanceEvaluationResult {
  * Strictly enforces policy boundaries on the server side:
  * - G0: System integrity & immutable audit logging
  * - G1: Activity lifecycle & prerequisite dependencies
- * - G2: Protected commitments (Family Block, Sleep Sanctuary)
- * - G3: Trading Gatekeeper (mandatory prep, setup checklist, risk limit)
+ * - G2: Protected commitments supplied by user/HOS policy
+ * - DOMAIN: Domain-specific execution gates supplied through adapters
  * - G4: Autonomy boundaries (L0-L5) & manual lock
  * - G5: Tamper-proof override signatures & double-confirmation
  */
@@ -109,24 +110,30 @@ export class GovernanceEngine {
   ): GovernanceEvaluationResult {
     const task = state.tasks.find(t => t.id === taskId);
 
-    // Protected Family Block constraint (16:00 to 19:30 / 960 to 1170 mins) - G2 Governance
-    const isFamilyTask = taskId.includes('family') || task?.anchorId === 'ANCHOR_9_CONNECT';
-    const overlapsFamily = startMinutes < PROTECTED_FAMILY_END && endMinutes > PROTECTED_FAMILY_START;
+    const protectedWindows = getProtectedScheduleWindows(state);
+    const ownWindowIds = new Set([taskId, `task-window-${taskId}`]);
+    const conflict = protectedWindows.find(window =>
+      !ownWindowIds.has(window.id) &&
+      startMinutes < window.endMinutes &&
+      endMinutes > window.startMinutes
+    );
 
-    if (overlapsFamily && !isFamilyTask) {
+    if (conflict) {
       if (!isEmergencyOverride || !overrideReason || overrideReason.trim().length < 5) {
         return {
           allowed: false,
           governanceLevel: 'G2',
           error: new GovernanceDeniedError(
-            `Protected Commitment Violation (G2): Non-family activity (${task?.title || taskId}) cannot overlap Protected Family block (16:00 - 19:30) without explicit emergency override and justification.`,
+            `Protected commitment violation: "${task?.title || taskId}" cannot overlap "${conflict.label || conflict.id}" without an explicit governed override.`,
             {
               taskId,
               allocatedStart: startMinutes,
               allocatedEnd: endMinutes,
-              protectedStart: PROTECTED_FAMILY_START,
-              protectedEnd: PROTECTED_FAMILY_END,
-              rule: 'G2_PROTECTED_FAMILY_DISPLACEMENT',
+              protectedWindowId: conflict.id,
+              protectedStart: conflict.startMinutes,
+              protectedEnd: conflict.endMinutes,
+              source: conflict.source,
+              rule: 'G2_PROTECTED_COMMITMENT_DISPLACEMENT',
             }
           ),
         };
