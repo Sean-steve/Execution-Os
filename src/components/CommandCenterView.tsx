@@ -16,6 +16,7 @@ import {
 import { AppState } from '../types';
 import { sound } from '../services/soundService';
 import confetti from 'canvas-confetti';
+import { defaultApplicationService } from '../services/executionApplicationService';
 
 interface CommandCenterViewProps {
   state: AppState;
@@ -32,30 +33,30 @@ export const CommandCenterView: React.FC<CommandCenterViewProps> = ({
   const [top3, setTop3] = useState(state.tomorrowPlan.top3[2] || 'Dedicated family scenic drive & presence');
   const [savedSuccess, setSavedSuccess] = useState(false);
 
-  const handleSaveCommand = (e: React.FormEvent) => {
+  const handleSaveCommand = async (e: React.FormEvent) => {
     e.preventDefault();
-    sound.playChime('success');
-    try {
-      confetti({ particleCount: 35, spread: 60, origin: { y: 0.5 } });
-    } catch {
-      // ignore
-    }
 
-    onUpdateState(prev => ({
-      ...prev,
+    const draft: AppState = {
+      ...state,
       victoryQuestionAnswer: victoryAnswer,
       tomorrowPlan: {
-        ...prev.tomorrowPlan,
+        ...state.tomorrowPlan,
         top3: [top1, top2, top3],
       },
-      tasks: prev.tasks.map(t =>
-        t.id === 'task-command-center' ? { ...t, completed: true } : t
-      ),
-      rewardPoints: prev.rewardPoints + 5,
-    }));
+    };
 
-    setSavedSuccess(true);
-    setTimeout(() => setSavedSuccess(false), 3000);
+    const result = await defaultApplicationService.completeActivity({
+      taskId: 'task-command-center',
+      executionStatus: 'ON_TIME',
+    }, draft);
+
+    if (result.success && result.state) {
+      sound.playChime('success');
+      try { confetti({ particleCount: 35, spread: 60, origin: { y: 0.5 } }); } catch {}
+      onUpdateState(() => result.state!);
+      setSavedSuccess(true);
+      setTimeout(() => setSavedSuccess(false), 3000);
+    }
   };
 
   return (
