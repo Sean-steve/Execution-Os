@@ -12,7 +12,8 @@ import { IClock, getClockForState, formatMinutesTo12Hour } from '../clock';
 import { createSystemEvent } from './eventBus';
 import { calculate7Pillars } from './storageService';
 import { activateTomorrowIntent, executeLateWakeRecovery, evaluateTomorrowFeasibility } from './tomorrowPlanningEngine';
-import { calculateDynamicAllocations, PROTECTED_FAMILY_START } from './allocationEngine';
+import { calculateDynamicAllocations } from './allocationEngine';
+import { reconcileAllocationPlanWithAuthority } from './scheduleAuthority';
 import { evaluateRoutineState } from './routineEngine';
 import { getAutonomousNextDecision } from './decisionEngine';
 import { defaultExecutionAuditService } from './executionAuditService';
@@ -175,12 +176,12 @@ export function reconcileLifecycleState(
   // -------------------------------------------------------------------------
   // 2. SCHEDULED WAKE & LATE WAKE RECOVERY (OFFLINE CATCH-UP)
   // -------------------------------------------------------------------------
-  const plannedWake = state.tomorrowPlan?.desiredWakeMinutes || 330; // 5:30 AM default
+  const plannedWake = state.tomorrowPlan?.desiredWakeMinutes ?? 0;
   const awakenTask = state.tasks.find(t => t.id === 'task-awaken' || t.anchorId === 'ANCHOR_1_AWAKEN');
   const hasCompletedMorningAnchor = awakenTask?.completed;
 
   // If awaken task exists and is past wake + 20m uncompleted and we haven't recovered today
-  if (awakenTask && !awakenTask.completed && currentMinutes >= (plannedWake + 20) && currentMinutes < PROTECTED_FAMILY_START) {
+  if (plannedWake > 0 && awakenTask && !awakenTask.completed && currentMinutes >= (plannedWake + 20)) {
     const drift = currentMinutes - plannedWake;
     lateWakeDetected = true;
     lateWakeDriftMinutes = drift;
@@ -196,7 +197,7 @@ export function reconcileLifecycleState(
         timestamp: nowIso,
         type: 'RECOVERY',
         title: 'Autonomous Late Wake Recovery Applied',
-        message: `Detected wake drift of +${drift}m. Morning anchors compressed to tier fallbacks to protect 4:00 PM family boundary.`,
+        message: `Detected start-time drift of +${drift}m. Execution recovery was evaluated against authoritative schedule boundaries.`,
         priority: 'HIGH',
         read: false,
         metadata: { driftMinutes: drift, wakeMinutes: currentMinutes },
@@ -263,8 +264,13 @@ export function reconcileLifecycleState(
   // Re-calculate dynamic allocations if any task expired or schedule shifted
   if (hasExpiredTasks || state.dynamicAllocations.length === 0) {
     const allocs = calculateDynamicAllocations(state);
-    state.dynamicAllocations = allocs.allocations;
-    state.tasks = allocs.recalculatedTasks;
+    const authorityDecision = reconcileAllocationPlanWithAuthority(
+      state,
+      allocs.allocations,
+      allocs.recalculatedTasks,
+      'Lifecycle reconciliation after expired allocations'
+    );
+    Object.assign(state, authorityDecision.state);
     expiredAllocationsCount = expiredTasksMarked.length;
   }
 
