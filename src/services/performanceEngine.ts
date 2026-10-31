@@ -18,7 +18,7 @@ import {
   RoutineTask,
   PerformanceProtocol
 } from '../types';
-import { defaultClock } from '../clock';
+import { defaultClock, IClock } from '../clock';
 import { CANONICAL_PERFORMANCE_PROTOCOLS, getProtocolForActivity } from '../data/performanceProtocols';
 import { defaultEventDispatcher } from './eventDispatcher';
 
@@ -50,6 +50,8 @@ function publishPerformanceEvent(event: {
 }
 
 export class HumanPerformanceEngine {
+  constructor(private readonly clock: IClock = defaultClock) {}
+
   /**
    * Environment Resolver
    * Resolves execution environment based on activity definition, context, and capability.
@@ -118,7 +120,7 @@ export class HumanPerformanceEngine {
       throw new Error(`ActivityInstance ${activityInstanceId} not found in current execution state.`);
     }
 
-    const nowUtc = defaultClock.toISOString();
+    const nowUtc = this.clock.toISOString();
     const resolvedEnv = this.resolveEnvironment(task, options?.environmentType);
     const protocol = options?.protocolId
       ? (CANONICAL_PERFORMANCE_PROTOCOLS.find(p => p.id === options.protocolId) || getProtocolForActivity(task.interactiveActionType || task.anchorId, resolvedEnv))
@@ -137,15 +139,15 @@ export class HumanPerformanceEngine {
       userId: options?.userId || 'usr-default-owner',
       activityInstanceId: task.id,
       activityDefinitionId: task.anchorId || task.id,
-      routineVersionId: 'v1.0.0',
+      routineVersionId: (state as any).routineVersionId || 'legacy-v1',
       title: task.title,
       objective: task.notes || task.title,
       environmentType: resolvedEnv,
       protocolId: protocol.id,
       protocolVersion: protocol.version,
       status: 'CREATED',
-      effectiveAllocationStartMinutes: task.startMinutes,
-      effectiveAllocationEndMinutes: task.endMinutes,
+      effectiveAllocationStartMinutes: task.allocatedStartMinutes ?? task.startMinutes,
+      effectiveAllocationEndMinutes: task.allocatedEndMinutes ?? task.endMinutes,
       targetDurationMinutes: protocol.targetDurationMinutes || (task.endMinutes - task.startMinutes) || 30,
       minimumDurationMinutes: protocol.minimumDurationMinutes || 10,
       activeDurationSeconds: 0,
@@ -181,7 +183,7 @@ export class HumanPerformanceEngine {
       throw new Error(`Cannot prepare session in status ${session.status}. Expected CREATED.`);
     }
 
-    const nowUtc = defaultClock.toISOString();
+    const nowUtc = this.clock.toISOString();
 
     const updated = {
       ...session,
@@ -208,7 +210,7 @@ export class HumanPerformanceEngine {
       throw new Error(`Cannot mark ready session in status ${session.status}.`);
     }
 
-    const nowUtc = defaultClock.toISOString();
+    const nowUtc = this.clock.toISOString();
 
     const updated = {
       ...session,
@@ -235,7 +237,7 @@ export class HumanPerformanceEngine {
       throw new Error(`Invalid state transition: Cannot start session from status ${session.status}`);
     }
 
-    const nowUtc = defaultClock.toISOString();
+    const nowUtc = this.clock.toISOString();
 
     const stepExecutions = session.stepExecutions.map((step, idx) => {
       if (idx === 0) {
@@ -273,7 +275,7 @@ export class HumanPerformanceEngine {
       throw new Error(`Cannot pause session in status ${session.status}`);
     }
 
-    const nowUtc = defaultClock.toISOString();
+    const nowUtc = this.clock.toISOString();
     const reconciled = this.reconcileSessionTiming(session, nowUtc);
 
     const interruption: PerformanceInterruption = {
@@ -310,7 +312,7 @@ export class HumanPerformanceEngine {
       throw new Error(`Cannot resume session in status ${session.status}`);
     }
 
-    const nowUtc = defaultClock.toISOString();
+    const nowUtc = this.clock.toISOString();
 
     // Close open interruption
     const interruptions = session.interruptions.map(int => {
@@ -366,7 +368,7 @@ export class HumanPerformanceEngine {
       throw new Error(`Cannot advance step in session status ${session.status}`);
     }
 
-    const nowUtc = defaultClock.toISOString();
+    const nowUtc = this.clock.toISOString();
     const step = session.stepExecutions[stepIndex];
     if (!step) {
       throw new Error(`Step index ${stepIndex} out of bounds.`);
@@ -426,7 +428,7 @@ export class HumanPerformanceEngine {
       provenance?: string;
     }
   ): PerformanceSession {
-    const nowUtc = defaultClock.toISOString();
+    const nowUtc = this.clock.toISOString();
 
     const artifact: PerformanceArtifact = {
       id: `art-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
@@ -468,7 +470,7 @@ export class HumanPerformanceEngine {
       payload: Record<string, any>;
     }
   ): PerformanceSession {
-    const nowUtc = defaultClock.toISOString();
+    const nowUtc = this.clock.toISOString();
 
     const evidence: PerformanceEvidence = {
       id: `evi-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
@@ -513,7 +515,7 @@ export class HumanPerformanceEngine {
     approved: boolean;
     reasonText: string;
   } {
-    const nowUtc = defaultClock.toISOString();
+    const nowUtc = this.clock.toISOString();
 
     const currentTask = state.tasks.find(t => t.id === session.activityInstanceId);
     const newProposedEnd = (currentTask?.endMinutes || session.effectiveAllocationEndMinutes) + requestedMinutes;
@@ -601,7 +603,7 @@ export class HumanPerformanceEngine {
     updatedSession: PerformanceSession;
     outcomeResult: PerformanceOutcomeResult;
   } {
-    const nowUtc = defaultClock.toISOString();
+    const nowUtc = this.clock.toISOString();
 
     // Final timing reconciliation
     const reconciled = this.reconcileSessionTiming(session, nowUtc);
@@ -611,15 +613,55 @@ export class HumanPerformanceEngine {
     let reason = options?.reason || `Session closed with ${userReportedOutcome}.`;
     let completionPercentage = 100;
 
-    // Minimum duration policy check
-    if (userReportedOutcome === 'COMPLETED') {
-      if (reconciled.minimumDurationMinutes && activeMins < reconciled.minimumDurationMinutes) {
-        finalOutcome = 'PARTIAL';
-        completionPercentage = Math.round((activeMins / reconciled.minimumDurationMinutes) * 100);
-        reason = `Active duration (${activeMins}m) was below minimum target (${reconciled.minimumDurationMinutes}m). Evaluated as Partial.`;
-      } else {
-        completionPercentage = 100;
-      }
+    const protocol = session.protocolId
+      ? CANONICAL_PERFORMANCE_PROTOCOLS.find(p => p.id === session.protocolId)
+      : undefined;
+    const requiredEvidenceRank: Record<EvidenceLevel, number> = { E0: 0, E1: 1, E2: 2, E3: 3, E4: 4 };
+    const validEvidenceRank = reconciled.evidence
+      .filter(e => e.isValid)
+      .reduce((max, e) => Math.max(max, requiredEvidenceRank[e.trustLevel] ?? 0), 0);
+    const requiredRank = protocol ? requiredEvidenceRank[protocol.evidencePolicy.requiredLevel] : 0;
+
+    const requiredProtocolSteps = (protocol?.steps || []).filter(step => !step.isOptional && step.type !== 'CLOSE');
+    const protocolStepsMet = requiredProtocolSteps.every(step => {
+      const execution = reconciled.stepExecutions.find(s => s.stepId === step.id);
+      if (!execution || execution.status !== 'COMPLETED') return false;
+      if (step.requiredQuantity !== undefined && (execution.quantityCompleted || 0) < step.requiredQuantity) return false;
+      return true;
+    });
+
+    const evidenceMet =
+      requiredRank === 0 ||
+      validEvidenceRank >= requiredRank ||
+      (requiredRank === 1 && reconciled.activeDurationSeconds > 0);
+
+    const minimumDurationMet = !reconciled.minimumDurationMinutes || activeMins >= reconciled.minimumDurationMinutes;
+    const policy = protocol?.completionPolicy || 'BINARY_CONFIRMATION';
+
+    let policyMet = true;
+    if (policy === 'MINIMUM_DURATION' || policy === 'TARGET_DURATION') {
+      policyMet = minimumDurationMet;
+    } else if (policy === 'QUANTITY') {
+      policyMet = protocolStepsMet;
+    } else if (policy === 'PROTOCOL') {
+      policyMet = protocolStepsMet && evidenceMet;
+    } else if (policy === 'OUTCOME') {
+      policyMet = evidenceMet || reconciled.artifacts.length > 0 || Boolean(options?.qualityAssessment?.score);
+    } else if (policy === 'INTEGRATION_EVIDENCE') {
+      policyMet = validEvidenceRank >= requiredEvidenceRank.E3;
+    } else if (policy === 'COMPOSITE') {
+      policyMet = minimumDurationMet && protocolStepsMet && evidenceMet;
+    }
+
+    if (userReportedOutcome === 'COMPLETED' && !policyMet) {
+      finalOutcome = 'PARTIAL';
+      const durationPercent = reconciled.minimumDurationMinutes
+        ? Math.round((activeMins / Math.max(1, reconciled.minimumDurationMinutes)) * 100)
+        : 50;
+      completionPercentage = Math.min(90, Math.max(1, durationPercent));
+      reason = `Completion policy ${policy} was not satisfied. Required protocol/evidence remains incomplete.`;
+    } else if (userReportedOutcome === 'COMPLETED') {
+      completionPercentage = 100;
     } else if (userReportedOutcome === 'PARTIAL') {
       completionPercentage = Math.min(90, Math.round((activeMins / Math.max(1, reconciled.targetDurationMinutes)) * 100));
     } else if (userReportedOutcome === 'BLOCKED') {
@@ -637,7 +679,7 @@ export class HumanPerformanceEngine {
       completionPercentage,
       activeDurationSeconds: reconciled.activeDurationSeconds,
       pausedDurationSeconds: reconciled.pausedDurationSeconds,
-      evidenceMet: reconciled.evidence.some(e => e.isValid) || finalOutcome === 'COMPLETED',
+      evidenceMet: finalOutcome === 'COMPLETED' ? true : reconciled.evidence.some(e => e.isValid),
       releasedMinutes: (finalOutcome === 'COMPLETED' && releasedMinutes > 0) ? releasedMinutes : undefined
     };
 
@@ -672,7 +714,7 @@ export class HumanPerformanceEngine {
       throw new Error(`Cannot cancel already committed session in status ${session.status}.`);
     }
 
-    const nowUtc = defaultClock.toISOString();
+    const nowUtc = this.clock.toISOString();
 
     return {
       ...session,
