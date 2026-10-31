@@ -138,6 +138,7 @@ describe('Execution OS Final Production Truth Hardening & Certification Suite', 
       const originalEnv = process.env.NODE_ENV;
       process.env.NODE_ENV = 'production';
       process.env.HEE_SECURITY_SECRET = testSecret;
+      process.env.HEE_AUTH_BOOTSTRAP_SECRET = testSecret;
 
       try {
         const app = createApp({ repository: repo });
