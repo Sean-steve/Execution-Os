@@ -30,7 +30,12 @@ import {
   PerformanceExtensionRequest,
   PerformanceEnvironmentConfig,
   PerformanceQualityAssessment,
-  PerformanceOutcomeResult
+  PerformanceOutcomeResult,
+  DailyPerformanceRecord,
+  WeeklyPerformanceRecord,
+  DayOfWeekPerformanceProfile,
+  WeeklyInsight,
+  WeeklyAdaptationRecommendation
 } from '../types';
 
 /**
@@ -550,3 +555,30 @@ export interface PerformanceProtocolEntity extends VersionedEntity, UserScopedEn
   minimumDurationMinutes?: number;
 }
 
+
+
+export interface DailyPerformanceRecordEntity extends DailyPerformanceRecord {
+  version: number;
+  updatedAtUtc: string;
+}
+
+export interface WeeklyPerformanceRecordEntity extends WeeklyPerformanceRecord {
+  version: number;
+  updatedAtUtc: string;
+}
+
+export interface DayOfWeekPerformanceProfileEntity extends DayOfWeekPerformanceProfile {
+  version: number;
+  createdAtUtc: string;
+}
+
+export interface WeeklyInsightEntity extends WeeklyInsight, UserScopedEntity {
+  version: number;
+  createdAtUtc: string;
+  updatedAtUtc: string;
+}
+
+export interface WeeklyAdaptationRecommendationEntity extends WeeklyAdaptationRecommendation, UserScopedEntity {
+  version: number;
+  updatedAtUtc: string;
+}
