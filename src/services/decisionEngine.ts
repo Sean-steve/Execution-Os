@@ -4,6 +4,7 @@ import { checkTaskDependencies } from './dependencyEngine';
 import { getTaskFallbackTiers } from './fallbackEngine';
 import { calculateDynamicAllocations } from './allocationEngine';
 import { getAuthoritativeProtectedCommitments } from './scheduleAuthority';
+import { getAutonomousNextDecision as getLegacyAutonomousNextDecision } from '../adapters/legacyStandaloneDecisionEngine';
 
 export interface AutonomousDecisionResult {
   currentTask: RoutineTask | null;
@@ -24,6 +25,10 @@ export interface AutonomousDecisionResult {
  * Answers "WHAT SHOULD I DO NEXT?" with deep contextual awareness and human-readable reasoning.
  */
 export const getAutonomousNextDecision = (state: AppState): AutonomousDecisionResult => {
+  if ((state as any).legacyStandaloneCompatibility) {
+    return getLegacyAutonomousNextDecision(state);
+  }
+
   const currentMinutes = getCurrentTimeMinutes(state);
   const mode = state.currentMode;
   const tasks = state.tasks.filter(t => t.modesAllowed.includes(mode));
