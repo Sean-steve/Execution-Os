@@ -4,6 +4,7 @@ import { checkTaskDependencies } from './dependencyEngine';
 import { getFallbackPolicyForTask, selectOptimalFallbackTier } from './fallbackEngine';
 import { getWeeklyPerformanceFitModifier } from './weeklyPerformanceIntelligence';
 import { getProtectedScheduleWindows, reconcileWithScheduleAuthority } from './scheduleAuthorityService';
+export { STANDALONE_FAMILY_START as PROTECTED_FAMILY_START, STANDALONE_FAMILY_END as PROTECTED_FAMILY_END } from '../data/standalonePolicyFixture';
 
 export interface AllocationResult {
   allocations: DynamicAllocation[];
