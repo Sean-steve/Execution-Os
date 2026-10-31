@@ -84,8 +84,8 @@ export const HOS_ENGINE_CAPABILITIES: HOSEngineCapabilityDefinition[] = [
 export const HOS_ENGINE_MANIFEST: HOSEngineManifest = {
   engineId: 'execution-os',
   displayName: 'Execution OS',
-  contractVersion: '1.0.0',
-  engineVersion: 'E7',
+  contractVersion: '1.1.0',
+  engineVersion: 'E9',
   identityAuthority: 'HumanKernelOS',
   scheduleAuthority: 'HumanKernelOS',
   capabilities: HOS_ENGINE_CAPABILITIES,
