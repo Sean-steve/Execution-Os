@@ -7,7 +7,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { AppState, RoutineTask } from './types';
-import { DEFAULT_APP_STATE } from './data/defaultData';
+import { RUNTIME_INITIAL_STATE } from './data/runtimeInitialState';
 import { 
   loadAppState, 
   saveAppState, 
@@ -189,7 +189,7 @@ export default function App() {
       try {
         const parsed = JSON.parse(event.target?.result as string);
         setState({
-          ...DEFAULT_APP_STATE,
+          ...RUNTIME_INITIAL_STATE,
           ...parsed,
         });
         sound.playChime('success');
@@ -201,7 +201,7 @@ export default function App() {
   };
 
   const handleResetToDefaults = () => {
-    setState(DEFAULT_APP_STATE);
+    setState(RUNTIME_INITIAL_STATE);
     setShowResetConfirm(false);
     sound.playChime('start');
   };
