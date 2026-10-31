@@ -175,9 +175,15 @@ describe('HumanKernelOS E4-E6 Integration Certification', () => {
 
       const repoB = productionFactory.forSubject(b);
       const stateB = await repoB.loadState();
-
       expect(stateB.rewardPoints).toBe(0);
       expect(stateB.subjectId).not.toBe(a.subjectId);
+
+      stateB.subjectId = b.subjectId;
+      stateB.tenantId = b.tenantId;
+      await repoB.saveState(stateB);
+
+      const reloadedA = await repoA.loadState();
+      expect(reloadedA.rewardPoints).toBe(37);
       expect(fs.readdirSync(tempDir).filter(name => name.endsWith('.json')).length).toBeGreaterThanOrEqual(2);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
