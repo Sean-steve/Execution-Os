@@ -70,7 +70,7 @@ export const calculateDynamicAllocations = (state: AppState): AllocationResult =
   let hasScheduleCompression = false;
   if (uncompletedPastScheduled.length > 0) {
     const minutesLate = currentMinutes - Math.min(...uncompletedPastScheduled.map(t => t.startMinutes));
-    reallocationReason = `Execution drift of ${minutesLate}m detected; flexible activities were recalculated within approved constraints.`;
+    reallocationReason = `Time drift of ${minutesLate}m detected; flexible activities were recalculated within approved constraints.`;
     hasScheduleCompression = true;
   } else if (state.dayType === 'EARLY_DEPARTURE') {
     reallocationReason = 'Early-departure constraint requires local execution-plan recalculation.';
