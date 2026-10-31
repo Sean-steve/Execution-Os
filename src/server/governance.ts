@@ -34,20 +34,22 @@ export class GovernanceEngine {
   static evaluateActivityStart(state: AppState, taskId: string): GovernanceEvaluationResult {
     const task = state.tasks.find(t => t.id === taskId);
     const def = state.activities.find(a => a.id === taskId);
-    if (!task) return { allowed: true };
 
-    // G1: Dependencies and external-engine gates are evaluated uniformly.
+    // G1: Dependencies and external-engine gates are evaluated before local-task
+    // existence. External engines may gate virtual actions not materialized locally.
     const dependencyCheck = checkTaskDependencies(state, taskId);
     if (dependencyCheck.isBlocked) {
       return {
         allowed: false,
         governanceLevel: 'G1',
         error: new DependencyBlockedError(
-          `Execution blocked for ${task.title}: ${dependencyCheck.blockingReasons.join('; ')}`,
+          `Execution blocked for ${task?.title || taskId}: ${dependencyCheck.blockingReasons.join('; ')}`,
           { blockingReasons: dependencyCheck.blockingReasons, taskId, rule: 'G1_EXECUTION_DEPENDENCY_OR_EXTERNAL_GATE' }
         ),
       };
     }
+
+    if (!task) return { allowed: true };
 
     // G4: Execution OS owns bounded execution autonomy, not whole-person policy.
     if (state.autonomyLevel === 5 && state.activeHumanDecision) {
