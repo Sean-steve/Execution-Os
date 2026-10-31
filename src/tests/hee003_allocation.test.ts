@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { calculateDynamicAllocations, PROTECTED_FAMILY_START, PROTECTED_FAMILY_END } from '../services/allocationEngine';
+import { calculateDynamicAllocations } from '../services/allocationEngine';
+import { PROTECTED_FAMILY_START, PROTECTED_FAMILY_END } from './fixtures/legacyStandaloneScheduleConstants';
 import { ScenarioBuilder } from './fixtures/scenarioBuilder';
 
 describe('HEE-003 — Dynamic Allocation Engine', () => {
