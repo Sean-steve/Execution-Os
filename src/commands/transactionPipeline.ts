@@ -134,6 +134,48 @@ export class TransactionPipeline {
       }
     };
 
+    const proposeScheduleMutation = (
+      task: RoutineTask,
+      proposedStartMinutes: number,
+      proposedEndMinutes: number,
+      reason: string,
+      compressed: boolean = false,
+      fallbackLevel?: number
+    ) => {
+      const proposal = {
+        id: `sched-proposal-${Date.now()}-${task.id}`,
+        source: 'EXECUTION_OS' as const,
+        authority: 'HOS' as const,
+        planId: state.scheduleAuthority?.planId,
+        planRevision: state.scheduleAuthority?.planRevision,
+        createdAtUtc: clock.toISOString(),
+        reason,
+        status: 'PROPOSED' as const,
+        changes: [{
+          activityId: task.id,
+          fromStartMinutes: task.allocatedStartMinutes ?? task.startMinutes,
+          fromEndMinutes: task.allocatedEndMinutes ?? task.endMinutes,
+          proposedStartMinutes,
+          proposedEndMinutes,
+          compressed,
+          fallbackLevel,
+        }],
+      };
+      state.pendingScheduleProposals = [
+        ...(state.pendingScheduleProposals || []).filter(p => p.status === 'PROPOSED'),
+        proposal,
+      ];
+      createdEvents.push(createSystemEvent(
+        'ScheduleChangeProposed',
+        proposal.id,
+        { planId: proposal.planId, planRevision: proposal.planRevision, reason, changes: proposal.changes },
+        state,
+        'USER',
+        undefined,
+        clock
+      ));
+    };
+
     // 2. VALIDATION STAGE
     if (command.validate) {
       const validation = command.validate(state, context);
@@ -318,105 +360,118 @@ export class TransactionPipeline {
         }
       } else if (command instanceof AdjustActivityCommand) {
         const { taskId, startMinutes, endMinutes } = command.payload;
-        state.tasks = state.tasks.map(t => {
-          if (t.id === taskId) {
-            return {
-              ...t,
-              startMinutes: startMinutes !== undefined ? startMinutes : t.startMinutes,
-              endMinutes: endMinutes !== undefined ? endMinutes : t.endMinutes,
-              allocatedStartMinutes: startMinutes !== undefined ? startMinutes : t.allocatedStartMinutes,
-              allocatedEndMinutes: endMinutes !== undefined ? endMinutes : t.allocatedEndMinutes,
-            };
-          }
-          return t;
-        });
-
-        const allocs = calculateDynamicAllocations(state);
-        commitAllocationResult(allocs);
-
-        const evt = createSystemEvent('AllocationChanged', taskId, command.payload, state, 'USER', undefined, clock);
-        createdEvents.push(evt);
+        const task = state.tasks.find(t => t.id === taskId);
+        if (task && state.scheduleAuthority?.mode === 'HOS_DELEGATED') {
+          proposeScheduleMutation(
+            task,
+            startMinutes ?? task.allocatedStartMinutes ?? task.startMinutes,
+            endMinutes ?? task.allocatedEndMinutes ?? task.endMinutes,
+            'User requested schedule adjustment; HOS approval required.'
+          );
+        } else {
+          state.tasks = state.tasks.map(t => {
+            if (t.id === taskId) {
+              return {
+                ...t,
+                startMinutes: startMinutes !== undefined ? startMinutes : t.startMinutes,
+                endMinutes: endMinutes !== undefined ? endMinutes : t.endMinutes,
+                allocatedStartMinutes: startMinutes !== undefined ? startMinutes : t.allocatedStartMinutes,
+                allocatedEndMinutes: endMinutes !== undefined ? endMinutes : t.allocatedEndMinutes,
+              };
+            }
+            return t;
+          });
+          const allocs = calculateDynamicAllocations(state);
+          commitAllocationResult(allocs);
+          const evt = createSystemEvent('AllocationChanged', taskId, command.payload, state, 'USER', undefined, clock);
+          createdEvents.push(evt);
+        }
       } else if (command instanceof AdvanceActivityCommand) {
         const { taskId, minutes, reason } = command.payload;
         const task = state.tasks.find(t => t.id === taskId);
         if (task) {
-          const oldState = { start: task.startMinutes, end: task.endMinutes };
-          state.tasks = state.tasks.map(t =>
-            t.id === taskId
-              ? {
-                  ...t,
-                  startMinutes: Math.max(0, t.startMinutes - minutes),
-                  endMinutes: Math.max(10, t.endMinutes - minutes),
-                }
-              : t
-          );
-          const overrideRecord: UserOverrideRecord = {
-            id: `ovr-${Date.now()}`,
-            timestamp: clock.toISOString(),
-            activityId: taskId,
-            overrideType: 'ADVANCE',
-            reason,
-            previousState: oldState,
-            newState: { minutesAdvanced: minutes },
-          };
-          state.userOverrides = [overrideRecord, ...(state.userOverrides || [])];
-          const evt = createSystemEvent('OverrideCreated', taskId, overrideRecord, state, 'USER', undefined, clock);
-          createdEvents.push(evt);
+          const start = task.allocatedStartMinutes ?? task.startMinutes;
+          const end = task.allocatedEndMinutes ?? task.endMinutes;
+          if (state.scheduleAuthority?.mode === 'HOS_DELEGATED') {
+            proposeScheduleMutation(task, Math.max(0, start - minutes), Math.max(1, end - minutes), reason);
+          } else {
+            const oldState = { start: task.startMinutes, end: task.endMinutes };
+            state.tasks = state.tasks.map(t =>
+              t.id === taskId
+                ? { ...t, startMinutes: Math.max(0, t.startMinutes - minutes), endMinutes: Math.max(10, t.endMinutes - minutes) }
+                : t
+            );
+            const overrideRecord: UserOverrideRecord = {
+              id: `ovr-${Date.now()}`,
+              timestamp: clock.toISOString(),
+              activityId: taskId,
+              overrideType: 'ADVANCE',
+              reason,
+              previousState: oldState,
+              newState: { minutesAdvanced: minutes },
+            };
+            state.userOverrides = [overrideRecord, ...(state.userOverrides || [])];
+            createdEvents.push(createSystemEvent('OverrideCreated', taskId, overrideRecord, state, 'USER', undefined, clock));
+          }
         }
       } else if (command instanceof DeferActivityCommand) {
         const { taskId, minutes, reason } = command.payload;
         const task = state.tasks.find(t => t.id === taskId);
         if (task) {
-          const oldState = { start: task.startMinutes, end: task.endMinutes };
-          state.tasks = state.tasks.map(t =>
-            t.id === taskId
-              ? {
-                  ...t,
-                  startMinutes: Math.min(1430, t.startMinutes + minutes),
-                  endMinutes: Math.min(1440, t.endMinutes + minutes),
-                }
-              : t
-          );
-          const overrideRecord: UserOverrideRecord = {
-            id: `ovr-${Date.now()}`,
-            timestamp: clock.toISOString(),
-            activityId: taskId,
-            overrideType: 'DEFER',
-            reason,
-            previousState: oldState,
-            newState: { minutesDeferred: minutes },
-          };
-          state.userOverrides = [overrideRecord, ...(state.userOverrides || [])];
-          const evt = createSystemEvent('OverrideCreated', taskId, overrideRecord, state, 'USER', undefined, clock);
-          createdEvents.push(evt);
+          const start = task.allocatedStartMinutes ?? task.startMinutes;
+          const end = task.allocatedEndMinutes ?? task.endMinutes;
+          if (state.scheduleAuthority?.mode === 'HOS_DELEGATED') {
+            proposeScheduleMutation(task, Math.min(1439, start + minutes), Math.min(1440, end + minutes), reason);
+          } else {
+            const oldState = { start: task.startMinutes, end: task.endMinutes };
+            state.tasks = state.tasks.map(t =>
+              t.id === taskId
+                ? { ...t, startMinutes: Math.min(1430, t.startMinutes + minutes), endMinutes: Math.min(1440, t.endMinutes + minutes) }
+                : t
+            );
+            const overrideRecord: UserOverrideRecord = {
+              id: `ovr-${Date.now()}`,
+              timestamp: clock.toISOString(),
+              activityId: taskId,
+              overrideType: 'DEFER',
+              reason,
+              previousState: oldState,
+              newState: { minutesDeferred: minutes },
+            };
+            state.userOverrides = [overrideRecord, ...(state.userOverrides || [])];
+            createdEvents.push(createSystemEvent('OverrideCreated', taskId, overrideRecord, state, 'USER', undefined, clock));
+          }
         }
       } else if (command instanceof CompressActivityCommand) {
         const { taskId, targetDurationMinutes, reason, fallbackTierLevel } = command.payload;
         const targetLevel = fallbackTierLevel !== undefined ? fallbackTierLevel : 1;
-        state.tasks = state.tasks.map(t => {
-          if (t.id === taskId) {
-            const start = t.allocatedStartMinutes || t.startMinutes;
-            return {
-              ...t,
-              endMinutes: start + targetDurationMinutes,
-              allocatedEndMinutes: start + targetDurationMinutes,
-              fallbackLevel: targetLevel,
-              executionStatus: 'COMPRESSED',
-            };
-          }
-          return t;
-        });
-
-        const allocs = calculateDynamicAllocations(state);
-        commitAllocationResult(allocs);
-        state.tasks = state.tasks.map(t =>
-          t.id === taskId
-            ? { ...t, fallbackLevel: targetLevel, executionStatus: 'COMPRESSED' }
-            : t
-        );
-
-        const evt = createSystemEvent('FallbackTriggered', taskId, { targetDurationMinutes, reason }, state, 'USER', undefined, clock);
-        createdEvents.push(evt);
+        const task = state.tasks.find(t => t.id === taskId);
+        if (task && state.scheduleAuthority?.mode === 'HOS_DELEGATED') {
+          const start = task.allocatedStartMinutes ?? task.startMinutes;
+          proposeScheduleMutation(task, start, start + targetDurationMinutes, reason, true, targetLevel);
+        } else {
+          state.tasks = state.tasks.map(t => {
+            if (t.id === taskId) {
+              const start = t.allocatedStartMinutes || t.startMinutes;
+              return {
+                ...t,
+                endMinutes: start + targetDurationMinutes,
+                allocatedEndMinutes: start + targetDurationMinutes,
+                fallbackLevel: targetLevel,
+                executionStatus: 'COMPRESSED',
+              };
+            }
+            return t;
+          });
+          const allocs = calculateDynamicAllocations(state);
+          commitAllocationResult(allocs);
+          state.tasks = state.tasks.map(t =>
+            t.id === taskId
+              ? { ...t, fallbackLevel: targetLevel, executionStatus: 'COMPRESSED' }
+              : t
+          );
+          createdEvents.push(createSystemEvent('FallbackTriggered', taskId, { targetDurationMinutes, reason }, state, 'USER', undefined, clock));
+        }
       } else if (command instanceof ReplaceActivityCommand) {
         const { taskId, replacementTaskId, reason } = command.payload;
         const targetTask = state.tasks.find(t => t.id === taskId);
