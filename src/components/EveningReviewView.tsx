@@ -18,6 +18,8 @@ import { calculate7Pillars } from '../services/storageService';
 import { evaluateTomorrowFeasibility } from '../services/tomorrowPlanningEngine';
 import { sound } from '../services/soundService';
 import confetti from 'canvas-confetti';
+import { defaultApplicationService } from '../services/executionApplicationService';
+import { upsertDailyPerformanceRecord, reconcileWeeklyPerformance, generateWeeklyAdaptationRecommendations } from '../services/weeklyPerformanceIntelligence';
 
 interface EveningReviewViewProps {
   state: AppState;
@@ -48,14 +50,8 @@ export const EveningReviewView: React.FC<EveningReviewViewProps> = ({
 
   const [savedSuccess, setSavedSuccess] = useState(false);
 
-  const handleSubmitReview = (e: React.FormEvent) => {
+  const handleSubmitReview = async (e: React.FormEvent) => {
     e.preventDefault();
-    sound.playChime('success');
-    try {
-      confetti({ particleCount: 50, spread: 70, origin: { y: 0.5 } });
-    } catch {
-      // ignore
-    }
 
     const review: DailyReview = {
       date: new Date().toISOString().split('T')[0],
@@ -76,9 +72,7 @@ export const EveningReviewView: React.FC<EveningReviewViewProps> = ({
       familyActivity,
       lastPlannedAt: new Date().toISOString(),
     };
-
-    const feasibility = evaluateTomorrowFeasibility(updatedTomorrowPlan, state);
-    updatedTomorrowPlan.lastFeasibilityResult = feasibility;
+    updatedTomorrowPlan.lastFeasibilityResult = evaluateTomorrowFeasibility(updatedTomorrowPlan, state);
 
     const pillarsMap: Record<PillarKey, boolean> = {
       morning: false,
@@ -89,9 +83,7 @@ export const EveningReviewView: React.FC<EveningReviewViewProps> = ({
       family: false,
       eveningShutdown: true,
     };
-    pillarsResult.pillars.forEach(p => {
-      pillarsMap[p.key] = p.satisfied;
-    });
+    pillarsResult.pillars.forEach(p => { pillarsMap[p.key] = p.satisfied; });
 
     const newHistoryRecord: DayHistoryRecord = {
       date: review.date,
@@ -102,19 +94,30 @@ export const EveningReviewView: React.FC<EveningReviewViewProps> = ({
       topVictory: accomplished.slice(0, 80) || state.victoryQuestionAnswer,
     };
 
-    onUpdateState(prev => ({
-      ...prev,
+    let workingState: AppState = {
+      ...state,
       dailyReview: review,
       tomorrowPlan: updatedTomorrowPlan,
-      tasks: prev.tasks.map(t =>
-        t.id === 'task-daily-analysis' || t.id === 'task-tomorrow-plan'
-          ? { ...t, completed: true }
-          : t
-      ),
-      history: [newHistoryRecord, ...prev.history.filter(h => h.date !== review.date)],
-      rewardPoints: prev.rewardPoints + (pillarsResult.score === 7 ? 15 : 8),
-    }));
+      history: [newHistoryRecord, ...state.history.filter(h => h.date !== review.date)],
+    };
 
+    for (const taskId of ['task-daily-analysis', 'task-tomorrow-plan']) {
+      const task = workingState.tasks.find(t => t.id === taskId);
+      if (!task || task.completed) continue;
+      const result = await defaultApplicationService.completeActivity({ taskId, executionStatus: 'ON_TIME' }, workingState);
+      if (result.success && result.state) workingState = result.state;
+    }
+
+    workingState = upsertDailyPerformanceRecord(workingState, review.date);
+    workingState = reconcileWeeklyPerformance(workingState, review.date);
+    workingState = {
+      ...workingState,
+      weeklyAdaptationRecommendations: generateWeeklyAdaptationRecommendations(workingState),
+    };
+
+    sound.playChime('success');
+    try { confetti({ particleCount: 50, spread: 70, origin: { y: 0.5 } }); } catch {}
+    onUpdateState(() => workingState);
     setSavedSuccess(true);
   };
 

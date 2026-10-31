@@ -23,6 +23,7 @@ import {
 import { sound } from '../services/soundService';
 import { getActiveDayTheme } from '../services/dayThemeService';
 import confetti from 'canvas-confetti';
+import { defaultApplicationService } from '../services/executionApplicationService';
 
 interface NextActionBannerProps {
   state: AppState;
@@ -41,44 +42,28 @@ export const NextActionBanner: React.FC<NextActionBannerProps> = ({
   const currentMinutes = getCurrentTimeMinutes(state);
   const activeTheme = getActiveDayTheme(state);
 
-  const handleCompleteCurrentTask = (task: RoutineTask) => {
-    // Check if task is missed / expired past its scheduled window
-    if (isTaskMissedTime(task, currentMinutes)) {
-      // Trigger Strict Discipline Accountability Modal
+  const handleCompleteCurrentTask = async (task: RoutineTask) => {
+    const effectiveEnd = task.allocatedEndMinutes ?? task.endMinutes;
+    if (state.strictTimeEnforcement && currentMinutes > effectiveEnd + 5) {
       sound.playChime('warning');
       onRequestDisciplineCheck(task);
       return;
     }
 
-    // On-Time Completion
-    sound.playChime('success');
-    try {
-      confetti({
-        particleCount: 40,
-        spread: 60,
-        origin: { y: 0.6 },
-        colors: [activeTheme.colorHex, '#10b981', '#3b82f6'],
-      });
-    } catch {
-      // ignore
-    }
+    const result = await defaultApplicationService.completeActivity({
+      taskId: task.id,
+      completedAtMinutes: currentMinutes,
+      executionStatus: 'ON_TIME',
+      missedWindow: false,
+    }, state);
 
-    onUpdateState(prev => {
-      const updatedTasks = prev.tasks.map(t =>
-        t.id === task.id ? { 
-          ...t, 
-          completed: true, 
-          completedAtMinutes: currentMinutes,
-          executionStatus: 'ON_TIME' as const,
-          missedWindow: false 
-        } : t
-      );
-      return {
-        ...prev,
-        tasks: updatedTasks,
-        rewardPoints: prev.rewardPoints + (task.isNonNegotiable ? 5 : 3),
-      };
-    });
+    if (result.success && result.state) {
+      sound.playChime('success');
+      try {
+        confetti({ particleCount: 40, spread: 60, origin: { y: 0.6 }, colors: [activeTheme.colorHex, '#10b981', '#3b82f6'] });
+      } catch {}
+      onUpdateState(() => result.state!);
+    }
   };
 
   const handleActionClick = (task: RoutineTask) => {

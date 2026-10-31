@@ -30,6 +30,7 @@ import { MemoryDurableEventStore } from '../services/durableEventStore';
 import { IdempotentEventDispatcher, IEventConsumer } from '../services/eventDispatcher';
 import { ScenarioBuilder, verifyEventCorrelationChain } from './fixtures/scenarioBuilder';
 import { InMemoryExecutionRepository } from '../services/repository';
+import { ExecutionApplicationService } from '../services/executionApplicationService';
 
 describe('Sprint 12: Full Execution OS Production Acceptance (EOS-000 through EOS-016 & HEE-001 through HEE-010)', () => {
   let state: AppState;
@@ -171,8 +172,11 @@ describe('Sprint 12: Full Execution OS Production Acceptance (EOS-000 through EO
       expect(nextDecision.decisionReason.length).toBeGreaterThan(10);
       expect(nextDecision.availableFallbackTiers.length).toBeGreaterThanOrEqual(1);
 
-      // Step 18: Continue monitoring (background worker heartbeat active)
-      expect(defaultBackgroundWorker.isWorkerActive() !== undefined).toBe(true);
+      // Step 18: Continue monitoring (prove the background worker can become active)
+      defaultBackgroundWorker.start();
+      expect(defaultBackgroundWorker.isWorkerActive()).toBe(true);
+      defaultBackgroundWorker.stop();
+      expect(defaultBackgroundWorker.isWorkerActive()).toBe(false);
 
       // Step 19: Recover from another simulated interruption (e.g. 20-min midday overrun)
       const interruptedState = ScenarioBuilder.create(recoveryState)
@@ -195,10 +199,14 @@ describe('Sprint 12: Full Execution OS Production Acceptance (EOS-000 through EO
       const nextTomorrowPlan = evaluateTomorrowFeasibility(eveningState.tomorrowPlan, eveningState);
       expect(nextTomorrowPlan.isFeasible).toBe(true);
 
-      // Step 22: Store execution evidence for adaptation
-      const adaptationResult = scanLongitudinalAdaptations(eveningState, '30d');
-      expect(adaptationResult.patterns.length).toBeGreaterThanOrEqual(0);
-      expect(adaptationResult.proposals.length).toBeGreaterThanOrEqual(0);
+      // Step 22: Store and prove longitudinal execution evidence for adaptation
+      const longitudinalHistory = generateLongitudinalExecutionHistory(30);
+      const evidenceState = { ...eveningState, historicalDays: longitudinalHistory };
+      const adaptationResult = scanLongitudinalAdaptations(evidenceState, '30d');
+      expect(adaptationResult.summary.dataCoverageDays).toBe(30);
+      expect(adaptationResult.summary.totalExecutionsAnalyzed).toBeGreaterThan(0);
+      expect(adaptationResult.patterns.length).toBeGreaterThan(0);
+      expect(adaptationResult.proposals.length).toBeGreaterThan(0);
     });
   });
 
@@ -213,13 +221,33 @@ describe('Sprint 12: Full Execution OS Production Acceptance (EOS-000 through EO
       expect(state.tasks[0].id).toBe('task-awaken');
     });
 
-    it('HEE-002: Activity Lifecycle Engine enforces strict state transitions', () => {
-      const task = { ...state.tasks[0], inProgress: true };
-      expect(task.inProgress).toBe(true);
-      task.completed = true;
-      task.inProgress = false;
-      expect(task.completed).toBe(true);
-      expect(task.inProgress).toBe(false);
+    it('HEE-002: Activity Lifecycle Engine executes authoritative lifecycle transitions', async () => {
+      const task = state.tasks.find(t => t.id === 'task-awaken')!;
+      const repository = new InMemoryExecutionRepository(state);
+      const application = new ExecutionApplicationService(repository);
+
+      const started = await application.startActivity(task.id, state);
+      expect(started.success).toBe(true);
+      expect(started.events.some(e => e.event_type === 'ActivityStarted')).toBe(true);
+
+      const completed = await application.completeActivity({
+        taskId: task.id,
+        completedAtMinutes: task.startMinutes,
+        executionStatus: 'ON_TIME',
+      }, started.state);
+      expect(completed.success).toBe(true);
+      const completedTask = completed.state.tasks.find(t => t.id === task.id);
+      expect(completedTask?.completed).toBe(true);
+      expect(completed.events.some(e => e.event_type === 'ActivityCompleted')).toBe(true);
+
+      const pointsAfterFirstCompletion = completed.state.rewardPoints;
+      const repeated = await application.completeActivity({
+        taskId: task.id,
+        completedAtMinutes: task.startMinutes,
+        executionStatus: 'ON_TIME',
+      }, completed.state);
+      expect(repeated.success).toBe(true);
+      expect(repeated.state.rewardPoints).toBe(pointsAfterFirstCompletion);
     });
 
     it('HEE-003: Allocation Engine handles dynamic slot fitting without collisions', () => {

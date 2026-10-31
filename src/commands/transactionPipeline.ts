@@ -46,9 +46,10 @@ import {
   RecordPerformanceEvidenceCommand,
   RequestPerformanceExtensionCommand,
   ClosePerformanceSessionCommand,
-  CancelPerformanceSessionCommand
+  CancelPerformanceSessionCommand,
+  RedeemRewardCommand
 } from './commands';
-import { performanceEngine } from '../services/performanceEngine';
+import { HumanPerformanceEngine } from '../services/performanceEngine';
 import { evaluateRoutineState } from '../services/routineEngine';
 import { calculateDynamicAllocations, PROTECTED_FAMILY_START, PROTECTED_FAMILY_END } from '../services/allocationEngine';
 import { scanAndResolveDeviations } from '../services/deviationEngine';
@@ -71,6 +72,7 @@ import {
   rejectAdaptationProposal,
   measureAdaptationPerformance
 } from '../services/adaptationEngine';
+import { upsertDailyPerformanceRecord, reconcileWeeklyPerformance, generateWeeklyAdaptationRecommendations } from '../services/weeklyPerformanceIntelligence';
 
 /**
  * TransactionPipeline / Command Bus:
@@ -101,6 +103,7 @@ export class TransactionPipeline {
     const context: CommandContext = { clock, repository, unitOfWork: customContext?.unitOfWork };
 
     const currentMinutes = clock.getCurrentTimeMinutes();
+    const performanceEngine = new HumanPerformanceEngine(clock);
     const createdEvents: SystemEvent[] = [];
 
     // 2. VALIDATION STAGE
@@ -237,24 +240,33 @@ export class TransactionPipeline {
         const { taskId, executionStatus, missedWindow, penaltyCutPoints, completedAtMinutes } = command.payload;
         const completionTime = completedAtMinutes !== undefined ? completedAtMinutes : currentMinutes;
 
-        // If trading prep completes, mark market analyzed & setup verified
+        // Trading is structurally gated. Completion may never fabricate protocol evidence.
         if (taskId === 'task-trading-prep' || taskId === 'task-trading-protocol') {
-          state.tradingProtocol.marketAnalyzed = true;
-          state.tradingProtocol.setupDetected = true;
-          state.tradingProtocol.strategyCriteriaMet = true;
-          (state.tradingProtocol as any).preMarketAnalysisDone = true;
-
-          state.tasks = state.tasks.map(t =>
-            (t.id === 'task-trading-protocol' || t.id === 'task-trading-prep')
-              ? {
-                  ...t,
-                  completed: true,
-                  completedAtMinutes: completionTime,
-                  completedAtDate: clock.toISOString(),
-                  executionStatus: executionStatus || 'ON_TIME',
-                }
-              : t
-          );
+          const p = state.tradingProtocol;
+          const disciplinedNoTrade = p.marketAnalyzed && p.closedTerminal && p.noSetupJustified && !p.executed;
+          const validSetupPrepared =
+            p.marketAnalyzed &&
+            p.setupDetected &&
+            p.strategyCriteriaMet &&
+            p.riskLimitsSatisfied &&
+            p.stopLossDefined;
+          if (!disciplinedNoTrade && !validSetupPrepared) {
+            throw new Error('TRADING_GATE_CLOSED: Trading preparation cannot complete until analysis produces either a valid setup or a disciplined No Trade terminal outcome.');
+          }
+        }
+        if (taskId === 'task-trading-execution') {
+          const p = state.tradingProtocol;
+          const validExecutedTrade =
+            p.marketAnalyzed &&
+            p.setupDetected &&
+            p.strategyCriteriaMet &&
+            p.riskLimitsSatisfied &&
+            p.stopLossDefined &&
+            p.executed &&
+            p.closedTerminal;
+          if (!validExecutedTrade) {
+            throw new Error('TRADING_GATE_CLOSED: Trading execution cannot complete until a valid executed trade reaches terminal closure.');
+          }
         }
 
         const task = state.tasks.find(t => t.id === taskId);
@@ -593,6 +605,51 @@ export class TransactionPipeline {
           ...state.dailyReview,
           ...command.payload.review,
         };
+        const reviewDate = state.dailyReview.date || state.activeDate || clock.toISOString().slice(0, 10);
+        state = upsertDailyPerformanceRecord(state, reviewDate);
+        state = reconcileWeeklyPerformance(state, reviewDate);
+        state.weeklyAdaptationRecommendations = generateWeeklyAdaptationRecommendations(state);
+
+        const daily = (state.dailyPerformanceRecords || []).find(r => r.localDate === reviewDate);
+        const weekly = (state.weeklyPerformanceRecords || []).find(w => w.weekId === daily?.weekId);
+        if (daily) {
+          createdEvents.push(createSystemEvent('DailyPerformanceFinalized', daily.id, {
+            localDate: daily.localDate,
+            score: daily.overallDailyPerformanceScore,
+            adjustedDayStrength: daily.adjustedDayStrength,
+            confidence: daily.confidence,
+          }, state, 'SYSTEM_KERNEL', undefined, clock));
+        }
+        if (weekly) {
+          createdEvents.push(createSystemEvent('WeeklyPerformanceReconciled', weekly.id, {
+            weekId: weekly.weekId,
+            score: weekly.overallWeeklyPerformanceScore,
+            bestDayDate: weekly.bestDayDate,
+            confidence: weekly.confidence,
+          }, state, 'SYSTEM_KERNEL', undefined, clock));
+        }
+      } else if (command instanceof RedeemRewardCommand) {
+        const reward = state.rewards.find(r => r.id === command.payload.rewardId);
+        if (!reward) {
+          throw new Error(`Reward ${command.payload.rewardId} not found.`);
+        }
+        if (reward.redeemed) {
+          throw new Error('Reward has already been redeemed.');
+        }
+        if (state.rewardPoints < reward.pointsRequired && !reward.unlocked) {
+          throw new Error('Insufficient reward points.');
+        }
+        state.rewardPoints = Math.max(0, state.rewardPoints - reward.pointsRequired);
+        state.rewards = state.rewards.map(r =>
+          r.id === reward.id
+            ? { ...r, unlocked: true, redeemed: true, redeemedAt: clock.toISOString() }
+            : r
+        );
+        const evt = createSystemEvent('RewardRedeemed', reward.id, {
+          rewardId: reward.id,
+          pointsSpent: reward.pointsRequired,
+        }, state, 'USER', undefined, clock);
+        createdEvents.push(evt);
       } else if (command instanceof RecordIdentityStatusCommand) {
         state.identityStatus = {
           ...state.identityStatus,
@@ -602,22 +659,30 @@ export class TransactionPipeline {
         const session = performanceEngine.createSession(state, command.payload.activityInstanceId, {
           environmentType: command.payload.environmentType,
           protocolId: command.payload.protocolId,
-          userId: 'usr-default-owner'
+          userId: 'user_primary'
         });
         state.performanceSessions = [...(state.performanceSessions || []), session];
         state.activePerformanceSessionId = session.id;
         state.activeView = 'PERFORMANCE';
+        createdEvents.push(createSystemEvent('PerformanceSessionCreated', session.id, {
+          sessionId: session.id,
+          activityInstanceId: session.activityInstanceId,
+          environmentType: session.environmentType,
+          protocolId: session.protocolId,
+        }, state, 'USER', undefined, clock));
       } else if (command instanceof PreparePerformanceSessionCommand) {
         const session = (state.performanceSessions || []).find(s => s.id === command.payload.sessionId);
         if (session) {
           const updated = performanceEngine.prepareSession(session);
           state.performanceSessions = state.performanceSessions!.map(s => s.id === updated.id ? updated : s);
+          createdEvents.push(createSystemEvent('PerformancePreparationStarted', updated.id, { sessionId: updated.id }, state, 'USER', undefined, clock));
         }
       } else if (command instanceof ReadyPerformanceSessionCommand) {
         const session = (state.performanceSessions || []).find(s => s.id === command.payload.sessionId);
         if (session) {
           const updated = performanceEngine.readySession(session);
           state.performanceSessions = state.performanceSessions!.map(s => s.id === updated.id ? updated : s);
+          createdEvents.push(createSystemEvent('PerformanceReady', updated.id, { sessionId: updated.id }, state, 'USER', undefined, clock));
         }
       } else if (command instanceof StartPerformanceSessionCommand) {
         const session = (state.performanceSessions || []).find(s => s.id === command.payload.sessionId);
@@ -626,18 +691,24 @@ export class TransactionPipeline {
           state.performanceSessions = state.performanceSessions!.map(s => s.id === updated.id ? updated : s);
           state.activePerformanceSessionId = updated.id;
           state.activeView = 'PERFORMANCE';
+          createdEvents.push(createSystemEvent('PerformanceSessionStarted', updated.id, {
+            sessionId: updated.id,
+            startedAtUtc: updated.startedAtUtc,
+          }, state, 'USER', undefined, clock));
         }
       } else if (command instanceof PausePerformanceSessionCommand) {
         const session = (state.performanceSessions || []).find(s => s.id === command.payload.sessionId);
         if (session) {
           const updated = performanceEngine.pauseSession(session);
           state.performanceSessions = state.performanceSessions!.map(s => s.id === updated.id ? updated : s);
+          createdEvents.push(createSystemEvent('PerformanceSessionPaused', updated.id, { sessionId: updated.id }, state, 'USER', undefined, clock));
         }
       } else if (command instanceof ResumePerformanceSessionCommand) {
         const session = (state.performanceSessions || []).find(s => s.id === command.payload.sessionId);
         if (session) {
           const updated = performanceEngine.resumeSession(session);
           state.performanceSessions = state.performanceSessions!.map(s => s.id === updated.id ? updated : s);
+          createdEvents.push(createSystemEvent('PerformanceSessionResumed', updated.id, { sessionId: updated.id }, state, 'USER', undefined, clock));
         }
       } else if (command instanceof AdvancePerformanceStepCommand) {
         const session = (state.performanceSessions || []).find(s => s.id === command.payload.sessionId);
@@ -648,6 +719,12 @@ export class TransactionPipeline {
             notes: command.payload.notes
           });
           state.performanceSessions = state.performanceSessions!.map(s => s.id === updated.id ? updated : s);
+          createdEvents.push(createSystemEvent('PerformanceProgressRecorded', updated.id, {
+            sessionId: updated.id,
+            stepIndex: command.payload.stepIndex,
+            quantity: command.payload.quantity,
+            branchSelectedId: command.payload.branchSelectedId,
+          }, state, 'USER', undefined, clock));
         }
       } else if (command instanceof AttachPerformanceArtifactCommand) {
         const session = (state.performanceSessions || []).find(s => s.id === command.payload.sessionId);
@@ -660,6 +737,11 @@ export class TransactionPipeline {
             provenance: command.payload.provenance
           });
           state.performanceSessions = state.performanceSessions!.map(s => s.id === updated.id ? updated : s);
+          createdEvents.push(createSystemEvent('PerformanceArtifactAttached', updated.id, {
+            sessionId: updated.id,
+            title: command.payload.title,
+            artifactType: command.payload.artifactType,
+          }, state, 'USER', undefined, clock));
         }
       } else if (command instanceof RecordPerformanceEvidenceCommand) {
         const session = (state.performanceSessions || []).find(s => s.id === command.payload.sessionId);
@@ -671,12 +753,28 @@ export class TransactionPipeline {
             payload: command.payload.payload
           });
           state.performanceSessions = state.performanceSessions!.map(s => s.id === updated.id ? updated : s);
+          createdEvents.push(createSystemEvent('PerformanceEvidenceRecorded', updated.id, {
+            sessionId: updated.id,
+            evidenceType: command.payload.type,
+            trustLevel: command.payload.trustLevel,
+            source: command.payload.source,
+          }, state, command.payload.source === 'USER' ? 'USER' : 'SYSTEM_KERNEL', undefined, clock));
         }
       } else if (command instanceof RequestPerformanceExtensionCommand) {
         const session = (state.performanceSessions || []).find(s => s.id === command.payload.sessionId);
         if (session) {
+          createdEvents.push(createSystemEvent('PerformanceExtensionRequested', session.id, {
+            sessionId: session.id,
+            requestedMinutes: command.payload.requestedMinutes,
+            reason: command.payload.reason,
+          }, state, 'USER', undefined, clock));
           const result = performanceEngine.requestExtension(state, session, command.payload.requestedMinutes, command.payload.reason);
           state = result.updatedState;
+          createdEvents.push(createSystemEvent(result.approved ? 'PerformanceExtensionApproved' : 'PerformanceExtensionDenied', session.id, {
+            sessionId: session.id,
+            requestedMinutes: command.payload.requestedMinutes,
+            reason: result.reasonText,
+          }, state, 'GOVERNANCE_GUARD', undefined, clock));
         }
       } else if (command instanceof ClosePerformanceSessionCommand) {
         const session = (state.performanceSessions || []).find(s => s.id === command.payload.sessionId);
@@ -718,6 +816,17 @@ export class TransactionPipeline {
             );
           }
 
+          createdEvents.push(createSystemEvent('PerformanceOutcomeEvaluated', updatedSession.id, {
+            sessionId: updatedSession.id,
+            outcome: outcomeResult.outcome,
+            completionPercentage: outcomeResult.completionPercentage,
+            activeDurationSeconds: outcomeResult.activeDurationSeconds,
+          }, state, 'SYSTEM_KERNEL', undefined, clock));
+          createdEvents.push(createSystemEvent('PerformanceSessionClosed', updatedSession.id, {
+            sessionId: updatedSession.id,
+            status: updatedSession.status,
+          }, state, 'SYSTEM_KERNEL', undefined, clock));
+
           // Return to NOW view
           state.activeView = 'NOW';
         }
@@ -728,6 +837,11 @@ export class TransactionPipeline {
           state.performanceSessions = state.performanceSessions!.map(s => s.id === updated.id ? updated : s);
           state.activePerformanceSessionId = null;
           state.activeView = 'NOW';
+          createdEvents.push(createSystemEvent('PerformanceSessionClosed', updated.id, {
+            sessionId: updated.id,
+            status: 'CANCELLED',
+            reason: command.payload.reason,
+          }, state, 'USER', undefined, clock));
         }
       }
 

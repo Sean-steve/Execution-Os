@@ -23,6 +23,7 @@ import {
 import { AppState, CompanyAction } from '../types';
 import { sound } from '../services/soundService';
 import confetti from 'canvas-confetti';
+import { defaultApplicationService } from '../services/executionApplicationService';
 
 interface DeepWorkViewProps {
   state: AppState;
@@ -128,7 +129,6 @@ export const DeepWorkView: React.FC<DeepWorkViewProps> = ({
       tasks: prev.tasks.map(t =>
         t.id === 'task-company-of-day' ? { ...t, completed: updated.filter(a => a.done).length >= 2 } : t
       ),
-      rewardPoints: prev.rewardPoints + 3,
     }));
   };
 
@@ -293,15 +293,14 @@ export const DeepWorkView: React.FC<DeepWorkViewProps> = ({
               </button>
 
               <button
-                onClick={() => {
-                  sound.playChime('success');
-                  onUpdateState(prev => ({
-                    ...prev,
-                    tasks: prev.tasks.map(t =>
-                      t.id === 'task-deep-work-build' ? { ...t, completed: true } : t
-                    ),
-                    rewardPoints: prev.rewardPoints + 5,
-                  }));
+                onClick={async () => {
+                  const target = state.tasks.find(t => t.id === 'task-deep-work-build') || state.tasks.find(t => t.category === 'DEEP_WORK' && !t.completed);
+                  if (!target) return;
+                  const result = await defaultApplicationService.completeActivity({ taskId: target.id, executionStatus: 'ON_TIME' }, state);
+                  if (result.success && result.state) {
+                    sound.playChime('success');
+                    onUpdateState(() => result.state!);
+                  }
                 }}
                 className="px-3.5 py-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-semibold"
                 title="Mark deep work block done"

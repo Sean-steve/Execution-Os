@@ -60,7 +60,13 @@ export class SecurityEngine {
       if (!secret || secret.length < 32) {
         return { valid: false, message: 'Secret key length is below 32 characters.' };
       }
-      return { valid: true, message: 'Security secret is valid and secure.' };
+      if (process.env.NODE_ENV === 'production') {
+        const bootstrapSecret = process.env.HEE_AUTH_BOOTSTRAP_SECRET;
+        if (!bootstrapSecret || bootstrapSecret.trim().length < 32) {
+          return { valid: false, message: 'HEE_AUTH_BOOTSTRAP_SECRET must be configured and be at least 32 characters in production mode.' };
+        }
+      }
+      return { valid: true, message: 'Security secrets are valid and secure.' };
     } catch (err: any) {
       return { valid: false, message: err.message };
     }

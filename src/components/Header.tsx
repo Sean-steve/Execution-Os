@@ -30,6 +30,7 @@ import { scanAndResolveDeviations } from '../services/deviationEngine';
 import { sound } from '../services/soundService';
 import { AccessibleConfirmModal } from './ui/AccessibleConfirmModal';
 import { RealityChangeModal } from './ui/RealityChangeModal';
+import { defaultApplicationService } from '../services/executionApplicationService';
 
 interface HeaderProps {
   state: AppState;
@@ -78,8 +79,11 @@ export const Header: React.FC<HeaderProps> = ({
   const activeDayIndex = getActiveDayIndex(state);
   const isAutoDay = state.selectedDayOverride === null || state.selectedDayOverride === undefined;
 
-  const handleSetMode = (mode: SystemMode) => {
-    onUpdateState(prev => ({ ...prev, currentMode: mode }));
+  const handleSetMode = async (mode: SystemMode) => {
+    const result = await defaultApplicationService.setSystemMode(mode, state);
+    if (result.success && result.state) {
+      onUpdateState(() => result.state!);
+    }
   };
 
   const handleSetDayType = (dayType: DayType) => {
@@ -92,7 +96,11 @@ export const Header: React.FC<HeaderProps> = ({
       setShowAlertModal(true);
       return;
     }
-    onUpdateState(prev => ({ ...prev, dayType }));
+    defaultApplicationService.setDayType(dayType, state).then(result => {
+      if (result.success && result.state) {
+        onUpdateState(() => result.state!);
+      }
+    });
   };
 
   const handleSelectDayOverride = (dayIdx: number | null) => {

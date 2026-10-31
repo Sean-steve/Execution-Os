@@ -2,6 +2,7 @@ import { AppState, DynamicAllocation, RoutineTask, SystemMode, DayType } from '.
 import { getCurrentTimeMinutes } from './storageService';
 import { checkTaskDependencies } from './dependencyEngine';
 import { getFallbackPolicyForTask, selectOptimalFallbackTier } from './fallbackEngine';
+import { getWeeklyPerformanceFitModifier } from './weeklyPerformanceIntelligence';
 
 // Protected boundaries (in minutes from midnight)
 export const PROTECTED_FAMILY_START = 960;  // 4:00 PM (16:00)
@@ -39,7 +40,20 @@ export const calculateDynamicAllocations = (state: AppState): AllocationResult =
   const tasks = [...state.tasks];
   
   // Filter tasks allowed in current mode
-  const allowedTasks = tasks.filter(t => (t.modesAllowed || ['GREEN', 'YELLOW', 'RED', 'BLACK']).includes(mode));
+  const allowedTasks = tasks
+    .filter(t => (t.modesAllowed || ['GREEN', 'YELLOW', 'RED', 'BLACK']).includes(mode))
+    .sort((a, b) => {
+      const nominalDiff = a.startMinutes - b.startMinutes;
+      // Preserve broad schedule order. WPI may only influence flexible tasks already near each other.
+      if (Math.abs(nominalDiff) > 60 || a.isProtected || b.isProtected || a.isNonNegotiable || b.isNonNegotiable) {
+        return nominalDiff;
+      }
+      const aFit = getWeeklyPerformanceFitModifier(state, a);
+      const bFit = getWeeklyPerformanceFitModifier(state, b);
+      const aKey = a.startMinutes - aFit * 2;
+      const bKey = b.startMinutes - bFit * 2;
+      return aKey - bKey;
+    });
 
   // Determine if we have a deviation from schedule (e.g. waking late or lagging behind)
   const uncompletedPastScheduled = allowedTasks.filter(
@@ -178,7 +192,12 @@ export const calculateDynamicAllocations = (state: AppState): AllocationResult =
       fallbackLevel,
       isProtected,
       priority: task.isNonNegotiable ? 5 : 3,
-      reasonForAdjustment: adjustmentReason,
+      reasonForAdjustment: (() => {
+        const fit = getWeeklyPerformanceFitModifier(state, task);
+        if (!fit) return adjustmentReason;
+        const sign = fit > 0 ? '+' : '';
+        return `${adjustmentReason} Weekly performance fit: ${sign}${fit} (soft HEE-003 signal).`;
+      })(),
       dependencyStatus: depCheck.isBlocked ? 'BLOCKED' : 'SATISFIED',
     });
 
@@ -198,3 +217,101 @@ export const calculateDynamicAllocations = (state: AppState): AllocationResult =
     isFeasible: true,
   };
 };
+
+
+export interface PerformanceExtensionAllocationResult {
+  approved: boolean;
+  reason: string;
+  resultingAllocatedEndMinutes?: number;
+  state: AppState;
+}
+
+/**
+ * HEE-003 authoritative evaluation for a HEE-011 request to extend an active performance session.
+ * HEE-011 requests time; the Allocation Engine owns the schedule consequence.
+ */
+export function evaluatePerformanceExtensionAllocation(
+  state: AppState,
+  activityId: string,
+  requestedMinutes: number
+): PerformanceExtensionAllocationResult {
+  const task = state.tasks.find(t => t.id === activityId);
+  if (!task) {
+    return { approved: false, reason: `Activity ${activityId} not found.`, state };
+  }
+
+  const effectiveStart = task.allocatedStartMinutes ?? task.startMinutes;
+  const effectiveEnd = task.allocatedEndMinutes ?? task.endMinutes;
+  const proposedEnd = effectiveEnd + requestedMinutes;
+
+  const conflictingProtected = state.tasks
+    .filter(t =>
+      t.id !== activityId &&
+      !t.completed &&
+      (t.isProtected || isFamilyTask(t) || t.isNonNegotiable) &&
+      (t.allocatedStartMinutes ?? t.startMinutes) >= effectiveEnd &&
+      (t.allocatedStartMinutes ?? t.startMinutes) < proposedEnd
+    )
+    .sort((a, b) => (a.allocatedStartMinutes ?? a.startMinutes) - (b.allocatedStartMinutes ?? b.startMinutes))[0];
+
+  if (conflictingProtected) {
+    const start = conflictingProtected.allocatedStartMinutes ?? conflictingProtected.startMinutes;
+    return {
+      approved: false,
+      reason: `Extension denied: +${requestedMinutes}m would invade protected "${conflictingProtected.title}" at ${start} minutes.`,
+      state,
+    };
+  }
+
+  const updatedTasks = state.tasks.map(t => {
+    if (t.id === activityId) {
+      return {
+        ...t,
+        allocatedEndMinutes: proposedEnd,
+      };
+    }
+
+    const start = t.allocatedStartMinutes ?? t.startMinutes;
+    const end = t.allocatedEndMinutes ?? t.endMinutes;
+    if (
+      !t.completed &&
+      !t.isProtected &&
+      !isFamilyTask(t) &&
+      !t.isNonNegotiable &&
+      start >= effectiveEnd &&
+      start < proposedEnd
+    ) {
+      return {
+        ...t,
+        allocatedStartMinutes: start + requestedMinutes,
+        allocatedEndMinutes: end + requestedMinutes,
+      };
+    }
+    return t;
+  });
+
+  const nextState = { ...state, tasks: updatedTasks };
+  const allocations = state.dynamicAllocations.map(allocation => {
+    const updatedTask = updatedTasks.find(t => t.id === allocation.activityId);
+    if (!updatedTask) return allocation;
+    return {
+      ...allocation,
+      allocatedStartMinutes: updatedTask.allocatedStartMinutes ?? allocation.allocatedStartMinutes,
+      allocatedEndMinutes: updatedTask.allocatedEndMinutes ?? allocation.allocatedEndMinutes,
+      durationMinutes:
+        (updatedTask.allocatedEndMinutes ?? allocation.allocatedEndMinutes) -
+        (updatedTask.allocatedStartMinutes ?? allocation.allocatedStartMinutes),
+      reasonForAdjustment:
+        updatedTask.id === activityId
+          ? `HEE-011 extension approved by HEE-003 (+${requestedMinutes}m).`
+          : allocation.reasonForAdjustment,
+    };
+  });
+
+  return {
+    approved: true,
+    reason: `${requestedMinutes} minutes approved by HEE-003; no protected commitment is invaded.`,
+    resultingAllocatedEndMinutes: proposedEnd,
+    state: { ...nextState, dynamicAllocations: allocations },
+  };
+}

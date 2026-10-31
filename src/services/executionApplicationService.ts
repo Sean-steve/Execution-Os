@@ -46,7 +46,8 @@ import {
   RecordPerformanceEvidenceCommand,
   RequestPerformanceExtensionCommand,
   ClosePerformanceSessionCommand,
-  CancelPerformanceSessionCommand
+  CancelPerformanceSessionCommand,
+  RedeemRewardCommand
 } from '../commands/commands';
 
 /**
@@ -125,6 +126,9 @@ export class ExecutionApplicationService {
         break;
       case 'AcceptDisciplinePenalty':
         command = new AcceptDisciplinePenaltyCommand(desc.payload);
+        break;
+      case 'RedeemReward':
+        command = new RedeemRewardCommand(desc.payload);
         break;
       case 'CompleteActivity':
         command = new CompleteActivityCommand(desc.payload);
@@ -251,6 +255,10 @@ export class ExecutionApplicationService {
 
   async acceptDisciplinePenalty(taskId: string, penaltyPoints?: number, currentState?: AppState): Promise<CommandResult> {
     return this.dispatch(new AcceptDisciplinePenaltyCommand({ taskId, penaltyPoints }), currentState);
+  }
+
+  async redeemReward(rewardId: string, currentState?: AppState): Promise<CommandResult> {
+    return this.dispatch(new RedeemRewardCommand({ rewardId }), currentState);
   }
 
   async reconcileLifecycle(options?: { forceDayBoundary?: boolean; targetMinutes?: number }, currentState?: AppState): Promise<AppState> {

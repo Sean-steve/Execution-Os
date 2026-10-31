@@ -28,6 +28,13 @@ import {
   RewardDefinitionEntity,
   DayHistoryEntity,
   LegacyRawMetadataEntity,
+  PerformanceSessionEntity,
+  PerformanceProtocolEntity,
+  DailyPerformanceRecordEntity,
+  WeeklyPerformanceRecordEntity,
+  DayOfWeekPerformanceProfileEntity,
+  WeeklyInsightEntity,
+  WeeklyAdaptationRecommendationEntity,
   VersionedEntity,
   UserScopedEntity
 } from './entities';
@@ -89,6 +96,13 @@ export interface CanonicalDatabaseSchema {
   reward_ledgers: RewardLedgerEntity[];
   reward_definitions: RewardDefinitionEntity[];
   day_histories: DayHistoryEntity[];
+  performance_sessions: PerformanceSessionEntity[];
+  performance_protocols: PerformanceProtocolEntity[];
+  daily_performance_records: DailyPerformanceRecordEntity[];
+  weekly_performance_records: WeeklyPerformanceRecordEntity[];
+  day_of_week_performance_profiles: DayOfWeekPerformanceProfileEntity[];
+  weekly_insights: WeeklyInsightEntity[];
+  weekly_adaptation_recommendations: WeeklyAdaptationRecommendationEntity[];
   legacy_raw_metadata: LegacyRawMetadataEntity[];
 }
 
@@ -197,6 +211,13 @@ export function createEmptyCanonicalSchema(): CanonicalDatabaseSchema {
     reward_ledgers: [],
     reward_definitions: [],
     day_histories: [],
+    performance_sessions: [],
+    performance_protocols: [],
+    daily_performance_records: [],
+    weekly_performance_records: [],
+    day_of_week_performance_profiles: [],
+    weekly_insights: [],
+    weekly_adaptation_recommendations: [],
     legacy_raw_metadata: [],
   };
 }

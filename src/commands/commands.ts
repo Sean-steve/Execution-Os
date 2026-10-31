@@ -44,7 +44,8 @@ import {
   RecordPerformanceEvidencePayload,
   RequestPerformanceExtensionPayload,
   ClosePerformanceSessionPayload,
-  CancelPerformanceSessionPayload
+  CancelPerformanceSessionPayload,
+  RedeemRewardPayload
 } from './types';
 import { AppState } from '../types';
 
@@ -611,3 +612,19 @@ export class CancelPerformanceSessionCommand implements ICommand {
 }
 
 
+
+export class RedeemRewardCommand implements ICommand {
+  readonly type = 'RedeemReward';
+  constructor(public payload: RedeemRewardPayload) {}
+
+  validate(state: AppState) {
+    if (!this.payload.rewardId) return { valid: false, error: 'rewardId is required.' };
+    const reward = state.rewards.find(r => r.id === this.payload.rewardId);
+    if (!reward) return { valid: false, error: `Reward ${this.payload.rewardId} not found.` };
+    if (reward.redeemed) return { valid: false, error: 'Reward has already been redeemed.' };
+    if (state.rewardPoints < reward.pointsRequired && !reward.unlocked) {
+      return { valid: false, error: 'Insufficient reward points.' };
+    }
+    return { valid: true };
+  }
+}

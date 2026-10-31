@@ -354,12 +354,17 @@ export function getProtocolById(protocolId: string): PerformanceProtocol | undef
 }
 
 export function getProtocolForActivity(activityType: string, environment?: ExecutionEnvironmentType): PerformanceProtocol {
-  const match = CANONICAL_PERFORMANCE_PROTOCOLS.find(p =>
-    (p.applicableActivityType === activityType) ||
-    (environment && p.applicableEnvironment === environment)
+  // Activity semantics are authoritative. Shared environments such as GUIDED
+  // are only a fallback when no exact activity protocol exists.
+  const activityMatch = CANONICAL_PERFORMANCE_PROTOCOLS.find(
+    p => p.applicableActivityType === activityType
   );
+  if (activityMatch) return activityMatch;
 
-  if (match) return match;
+  const environmentMatch = environment
+    ? CANONICAL_PERFORMANCE_PROTOCOLS.find(p => p.applicableEnvironment === environment)
+    : undefined;
+  if (environmentMatch) return environmentMatch;
 
   // Generic fallback protocol
   return {

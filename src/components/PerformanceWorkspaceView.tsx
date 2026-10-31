@@ -32,6 +32,7 @@ import {
   CheckSquare
 } from 'lucide-react';
 import { CANONICAL_PERFORMANCE_PROTOCOLS } from '../data/performanceProtocols';
+import { defaultApiClient } from '../services/apiClient';
 
 interface PerformanceWorkspaceViewProps {
   state: AppState;
@@ -94,7 +95,7 @@ export const PerformanceWorkspaceView: React.FC<PerformanceWorkspaceViewProps> =
   // Ritual checklist tracking for PREPARING state
   const [completedRituals, setCompletedRituals] = useState<Record<string, boolean>>({});
 
-  // AI execution partner conversation simulator
+  // Session-scoped HEE-011 AI execution partner
   const [aiMode, setAiMode] = useState<AIMode>(currentSession?.environmentConfig.aiMode || 'COACH');
   const [aiChatInput, setAiChatInput] = useState('');
   const [aiChatMessages, setAiChatMessages] = useState<Array<{ sender: 'AI' | 'USER'; text: string; time: string }>>([
@@ -163,8 +164,8 @@ export const PerformanceWorkspaceView: React.FC<PerformanceWorkspaceViewProps> =
   const targetSecs = (currentSession.targetDurationMinutes || 30) * 60;
   const progressPercent = Math.min(100, Math.round((elapsedSeconds / Math.max(1, targetSecs)) * 100));
 
-  const handleSendAiMessage = () => {
-    if (!aiChatInput.trim()) return;
+  const handleSendAiMessage = async () => {
+    if (!aiChatInput.trim() || !currentSession) return;
     const userMsg = aiChatInput.trim();
     setAiChatMessages(prev => [
       ...prev,
@@ -172,19 +173,29 @@ export const PerformanceWorkspaceView: React.FC<PerformanceWorkspaceViewProps> =
     ]);
     setAiChatInput('');
 
-    // Context-scoped AI response
-    setTimeout(() => {
-      let aiReply = `Acknowledged. Objective: "${currentSession.objective}". Maintain single-task focus.`;
-      if (aiMode === 'COACH') {
-        aiReply = `Good clarity. Let's isolate the next critical constraint. Keep your focus on producing the first tangible milestone.`;
-      } else if (aiMode === 'COPILOT') {
-        aiReply = `Drafting structure for "${userMsg}". Ensure you record the output artifact before wrapping up the current step.`;
-      }
+    try {
+      const response = await defaultApiClient.sendPerformanceAiMessage(currentSession.id, userMsg, aiMode);
+      const data = response.data;
       setAiChatMessages(prev => [
         ...prev,
-        { sender: 'AI', text: aiReply, time: 'Just now' }
+        {
+          sender: 'AI',
+          text: data.requiresApproval && data.proposedAction?.type !== 'NONE'
+            ? `${data.reply}\n\nA governed HEE action is required before that change can take effect.`
+            : data.reply,
+          time: 'Just now'
+        }
       ]);
-    }, 600);
+    } catch (error: any) {
+      setAiChatMessages(prev => [
+        ...prev,
+        {
+          sender: 'AI',
+          text: `Execution Partner unavailable: ${error?.message || 'Could not reach the scoped AI service.'}`,
+          time: 'Just now'
+        }
+      ]);
+    }
   };
 
   const handleToggleRitual = (ritualText: string) => {

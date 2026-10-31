@@ -27,6 +27,7 @@ import {
 } from '../services/storageService';
 import { getActiveDayTheme } from '../services/dayThemeService';
 import confetti from 'canvas-confetti';
+import { defaultApplicationService } from '../services/executionApplicationService';
 
 interface TimelineRoutineViewProps {
   state: AppState;
@@ -51,56 +52,43 @@ export const TimelineRoutineView: React.FC<TimelineRoutineViewProps> = ({
     filteredTasks = filteredTasks.filter(t => t.isNonNegotiable);
   }
 
-  const handleToggleTask = (task: RoutineTask) => {
-    // If currently completed, uncomplete it
-    if (task.completed) {
-      onUpdateState(prev => ({
-        ...prev,
-        tasks: prev.tasks.map(t => 
-          t.id === task.id ? { 
-            ...t, 
-            completed: false, 
-            missedWindow: false,
-            executionStatus: 'PENDING'
-          } : t
-        ),
-      }));
-      return;
-    }
+  const handleToggleTask = async (task: RoutineTask) => {
+    // Historical completion is immutable from the ordinary timeline. Undo requires an explicit governed correction path.
+    if (task.completed) return;
 
-    // Task is being marked done — strictly check time window
-    if (isTaskMissedTime(task, currentMinutes)) {
+    const effectiveStart = task.allocatedStartMinutes ?? task.startMinutes;
+    const effectiveEnd = task.allocatedEndMinutes ?? task.endMinutes;
+
+    if (state.strictTimeEnforcement && currentMinutes > effectiveEnd + 5) {
       sound.playChime('warning');
       onRequestDisciplineCheck(task);
       return;
     }
 
-    // On-time completion
-    sound.playChime('success');
-    try {
-      confetti({ particleCount: 30, spread: 50, origin: { y: 0.6 } });
-    } catch {
-      // ignore
+    let workingState = state;
+    if (currentMinutes < effectiveStart) {
+      const advance = await defaultApplicationService.advanceActivity(
+        task.id,
+        Math.max(1, effectiveStart - currentMinutes),
+        'User explicitly advanced activity from the timeline.',
+        workingState
+      );
+      if (!advance.success || !advance.state) return;
+      workingState = advance.state;
     }
 
-    onUpdateState(prev => {
-      const isEarly = currentMinutes < task.startMinutes;
-      const updated = prev.tasks.map(t =>
-        t.id === task.id ? { 
-          ...t, 
-          completed: true, 
-          completedAtMinutes: currentMinutes,
-          executionStatus: isEarly ? ('ADVANCE' as const) : ('ON_TIME' as const),
-          missedWindow: false 
-        } : t
-      );
+    const result = await defaultApplicationService.completeActivity({
+      taskId: task.id,
+      completedAtMinutes: currentMinutes,
+      executionStatus: 'ON_TIME',
+      missedWindow: false,
+    }, workingState);
 
-      return {
-        ...prev,
-        tasks: updated,
-        rewardPoints: prev.rewardPoints + (task.isNonNegotiable ? 5 : 3),
-      };
-    });
+    if (result.success && result.state) {
+      sound.playChime('success');
+      try { confetti({ particleCount: 30, spread: 50, origin: { y: 0.6 } }); } catch {}
+      onUpdateState(() => result.state!);
+    }
   };
 
   const handleOpenAction = (task: RoutineTask) => {

@@ -14,6 +14,8 @@ import {
 import { AppState, TradingProtocol } from '../types';
 import { sound } from '../services/soundService';
 import confetti from 'canvas-confetti';
+import { defaultApplicationService } from '../services/executionApplicationService';
+import { RecordTradingProtocolCommand } from '../commands';
 
 interface TradingProtocolViewProps {
   state: AppState;
@@ -28,29 +30,42 @@ export const TradingProtocolView: React.FC<TradingProtocolViewProps> = ({
   const [setupName, setSetupName] = useState(protocol.setupName || '');
   const [notes, setNotes] = useState(protocol.tradeNotes || '');
 
-  const updateProtocol = (updates: Partial<TradingProtocol>) => {
+  const updateProtocol = async (updates: Partial<TradingProtocol>) => {
     sound.playChime('start');
-    onUpdateState(prev => {
-      const nextProtocol = {
-        ...prev.tradingProtocol,
-        ...updates,
-      };
+    const nextProtocol: TradingProtocol = { ...state.tradingProtocol, ...updates };
 
-      // Check if trading task should be completed
-      const isComplete =
-        !nextProtocol.isTradingDay ||
-        (nextProtocol.marketAnalyzed && (!nextProtocol.setupDetected || nextProtocol.noSetupJustified)) ||
-        (nextProtocol.setupDetected && nextProtocol.strategyCriteriaMet && nextProtocol.riskLimitsSatisfied && nextProtocol.closedTerminal);
+    const recorded = await defaultApplicationService.dispatch(
+      new RecordTradingProtocolCommand({ protocol: updates }),
+      state
+    );
+    if (!recorded.success || !recorded.state) return;
 
-      return {
-        ...prev,
-        tradingProtocol: nextProtocol,
-        tasks: prev.tasks.map(t =>
-          t.id === 'task-trading-protocol' ? { ...t, completed: isComplete } : t
-        ),
-        rewardPoints: isComplete ? prev.rewardPoints + 5 : prev.rewardPoints,
-      };
-    });
+    let workingState = recorded.state;
+    const isComplete =
+      !nextProtocol.isTradingDay ||
+      (nextProtocol.marketAnalyzed && nextProtocol.closedTerminal && nextProtocol.noSetupJustified && !nextProtocol.executed) ||
+      (
+        nextProtocol.marketAnalyzed &&
+        nextProtocol.setupDetected &&
+        nextProtocol.strategyCriteriaMet &&
+        nextProtocol.riskLimitsSatisfied &&
+        nextProtocol.stopLossDefined &&
+        nextProtocol.closedTerminal
+      );
+
+    if (isComplete) {
+      const target = workingState.tasks.find(t => t.id === 'task-trading-protocol') ||
+        workingState.tasks.find(t => t.id === 'task-trading-prep');
+      if (target && !target.completed) {
+        const completed = await defaultApplicationService.completeActivity({
+          taskId: target.id,
+          executionStatus: 'ON_TIME',
+        }, workingState);
+        if (completed.success && completed.state) workingState = completed.state;
+      }
+    }
+
+    onUpdateState(() => workingState);
   };
 
   const handleToggleStep = (field: keyof TradingProtocol) => {

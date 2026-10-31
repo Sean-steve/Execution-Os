@@ -36,7 +36,9 @@ import {
   RecordPerformanceEvidenceCommand,
   RequestPerformanceExtensionCommand,
   ClosePerformanceSessionCommand,
-  CancelPerformanceSessionCommand
+  CancelPerformanceSessionCommand,
+  RedeemRewardCommand,
+  RecordTradingProtocolCommand
 } from '../../commands/commands';
 import { processAuthoritativeCommand, CommandExecutionOptions } from '../commandPipeline';
 import { GovernanceEngine } from '../governance';
@@ -62,12 +64,16 @@ import { SecurityEngine } from '../security';
 import { requirePermission } from '../auth';
 import { ConflictResolutionRecord, DeviceProfile, SyncQueueItem, LongitudinalWindow } from '../../types';
 import { scanLongitudinalAdaptations, generateLongitudinalExecutionHistory } from '../../services/adaptationEngine';
+import { buildDailyPerformanceRecord, buildWeeklyPerformanceRecord, buildDayOfWeekPerformanceProfiles } from '../../services/weeklyPerformanceIntelligence';
+import { performanceAiPartner } from '../../services/performanceAiPartner';
+import { performanceIntegrationHub } from '../../services/performanceIntegrationHub';
 import {
   ValidationError,
   ResourceNotFoundError,
   GovernanceDeniedError,
   TradingGateClosedError,
-  DependencyBlockedError
+  DependencyBlockedError,
+  SecurityIntegrityError
 } from '../errors';
 
 export function createHeeRouter(repository: IExecutionRepository = defaultExecutionRepository, clock?: IClock): Router {
@@ -95,6 +101,14 @@ export function createHeeRouter(repository: IExecutionRepository = defaultExecut
    */
   router.post('/auth/token', (req: Request, res: Response, next: NextFunction) => {
     try {
+      if (process.env.NODE_ENV === 'production') {
+        const expectedBootstrapSecret = process.env.HEE_AUTH_BOOTSTRAP_SECRET;
+        const suppliedBootstrapSecret = String(req.headers['x-hee-bootstrap-secret'] || '');
+        if (!expectedBootstrapSecret || expectedBootstrapSecret.length < 32 || suppliedBootstrapSecret !== expectedBootstrapSecret) {
+          return next(new SecurityIntegrityError('Production token bootstrap requires an authorized bootstrap credential.'));
+        }
+      }
+
       const { userId = 'user-owner', role = 'OWNER', tenantId = 'tenant-default', durationSeconds = 86400 } = req.body || {};
       const token = SecurityEngine.generateSessionToken(userId, role, tenantId, durationSeconds);
       const claims = SecurityEngine.verifySessionToken(token);
@@ -700,6 +714,21 @@ export function createHeeRouter(repository: IExecutionRepository = defaultExecut
     } catch (err) {
       next(err);
     }
+  });
+
+  /**
+   * POST /api/v1/hee/trading/protocol
+   * Records trading-gate evidence without fabricating task completion.
+   */
+  router.post('/trading/protocol', mutationLimiter, async (req: Request, res: Response, next: NextFunction) => {
+    const protocol = req.body?.protocol || req.body || {};
+    await processAuthoritativeCommand(
+      req,
+      res,
+      next,
+      () => new RecordTradingProtocolCommand({ protocol }),
+      options
+    );
   });
 
   // =========================================================================
@@ -1514,6 +1543,59 @@ export function createHeeRouter(repository: IExecutionRepository = defaultExecut
   });
 
   // =========================================================================
+  // EOS-WPI-001 WEEKLY PERFORMANCE INTELLIGENCE QUERIES
+  // =========================================================================
+
+  router.get('/performance/daily/:date', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const state = await repository.loadState();
+      const date = req.params.date;
+      const persisted = (state.dailyPerformanceRecords || []).find(r => r.localDate === date);
+      res.status(200).json({ success: true, data: persisted || buildDailyPerformanceRecord(state, date), persisted: Boolean(persisted) });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get('/performance/weekly/:weekId', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const state = await repository.loadState();
+      const persisted = (state.weeklyPerformanceRecords || []).find(w => w.weekId === req.params.weekId);
+      const anchor = persisted?.startDate || state.activeDate || new Date().toISOString().slice(0, 10);
+      res.status(200).json({ success: true, data: persisted || buildWeeklyPerformanceRecord(state, anchor), persisted: Boolean(persisted) });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get('/performance/day-of-week', async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const state = await repository.loadState();
+      const profiles = (state.dayOfWeekPerformanceProfiles || []).length
+        ? state.dayOfWeekPerformanceProfiles
+        : buildDayOfWeekPerformanceProfiles(state);
+      res.status(200).json({ success: true, data: profiles });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get('/performance/insights', async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const state = await repository.loadState();
+      res.status(200).json({
+        success: true,
+        data: {
+          insights: state.weeklyInsights || [],
+          recommendations: state.weeklyAdaptationRecommendations || [],
+        },
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // =========================================================================
   // HEE-011 HUMAN PERFORMANCE ENGINE ENDPOINTS
   // =========================================================================
 
@@ -1736,6 +1818,75 @@ export function createHeeRouter(repository: IExecutionRepository = defaultExecut
   });
 
   /**
+   * POST /api/v1/hee/performance/sessions/:id/ai
+   * Session-scoped AI execution partner. The AI is advisory and cannot mutate authoritative state.
+   */
+  router.post('/performance/sessions/:id/ai', mutationLimiter, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const state = await repository.loadState();
+      const session = (state.performanceSessions || []).find(s => s.id === req.params.id);
+      if (!session) return next(new ResourceNotFoundError(`Performance session ${req.params.id} not found.`));
+
+      const message = String(req.body?.message || '').trim();
+      const mode = req.body?.mode || session.environmentConfig.aiMode;
+      if (!message) return next(new ValidationError('message is required.'));
+
+      const result = await performanceAiPartner.respond({ session, state, message, mode });
+      res.status(200).json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  /**
+   * GET /api/v1/hee/performance/integrations
+   * Lists governed evidence adapters available to HEE-011.
+   */
+  router.get('/performance/integrations', async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      res.status(200).json({ success: true, data: performanceIntegrationHub.listAdapters() });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  /**
+   * POST /api/v1/hee/performance/sessions/:id/integrations/evidence
+   * Validates external/application evidence before recording it through the authoritative command pipeline.
+   */
+  router.post('/performance/sessions/:id/integrations/evidence', mutationLimiter, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const state = await repository.loadState();
+      const session = (state.performanceSessions || []).find(s => s.id === req.params.id);
+      if (!session) return next(new ResourceNotFoundError(`Performance session ${req.params.id} not found.`));
+
+      const adapterId = String(req.body?.adapterId || '');
+      if (!adapterId) return next(new ValidationError('adapterId is required.'));
+      const collected = performanceIntegrationHub.collectEvidence(session, state, {
+        adapterId,
+        payload: req.body?.payload || {},
+      });
+      if (!collected.valid) return next(new ValidationError(collected.reason));
+
+      await processAuthoritativeCommand(
+        req,
+        res,
+        next,
+        () => new RecordPerformanceEvidenceCommand({
+          sessionId: session.id,
+          type: collected.evidenceType,
+          source: 'INTEGRATION',
+          trustLevel: collected.trustLevel,
+          payload: collected.normalizedPayload,
+        }),
+        options
+      );
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  /**
    * POST /api/v1/hee/performance/sessions/:id/cancel
    */
   router.post('/performance/sessions/:id/cancel', mutationLimiter, async (req: Request, res: Response, next: NextFunction) => {
@@ -1748,6 +1899,16 @@ export function createHeeRouter(repository: IExecutionRepository = defaultExecut
         sessionId: req.params.id,
         reason: reason || 'Cancelled by user'
       }),
+      options
+    );
+  });
+
+  router.post('/rewards/:id/redeem', mutationLimiter, async (req: Request, res: Response, next: NextFunction) => {
+    await processAuthoritativeCommand(
+      req,
+      res,
+      next,
+      () => new RedeemRewardCommand({ rewardId: req.params.id }),
       options
     );
   });

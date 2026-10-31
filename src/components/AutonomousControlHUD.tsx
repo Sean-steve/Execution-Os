@@ -24,9 +24,8 @@ import { getAutonomousNextDecision } from '../services/decisionEngine';
 import { formatMinutesToTime, getCurrentTimeMinutes } from '../services/storageService';
 import { getActiveDayTheme } from '../services/dayThemeService';
 import { sound } from '../services/soundService';
-import { logEventToState } from '../services/eventBus';
-import { scanAndResolveDeviations } from '../services/deviationEngine';
 import confetti from 'canvas-confetti';
+import { defaultApplicationService } from '../services/executionApplicationService';
 
 interface AutonomousControlHUDProps {
   state: AppState;
@@ -52,146 +51,73 @@ export const AutonomousControlHUD: React.FC<AutonomousControlHUDProps> = ({
   const [overrideAction, setOverrideAction] = useState<'ADVANCE' | 'DEFER' | 'COMPRESS' | 'SKIP' | 'REPLACE'>('DEFER');
   const [showOverrideInput, setShowOverrideInput] = useState(false);
 
-  const handleCompleteAction = () => {
+  const handleCompleteAction = async () => {
     if (!task) return;
-    
-    // Check if task is late and strict enforcement is active
-    if (state.strictTimeEnforcement && currentMinutes > (task.endMinutes + 5)) {
+    const effectiveEnd = task.allocatedEndMinutes ?? task.endMinutes;
+    if (state.strictTimeEnforcement && currentMinutes > effectiveEnd + 5) {
       onRequestDisciplineModal(task);
       return;
     }
-
-    sound.playChime('success');
-    try {
-      confetti({ particleCount: 35, spread: 60, origin: { y: 0.6 } });
-    } catch {
-      // ignore
+    const result = await defaultApplicationService.completeActivity({
+      taskId: task.id,
+      completedAtMinutes: currentMinutes,
+      executionStatus: 'ON_TIME',
+      missedWindow: false,
+    }, state);
+    if (result.success && result.state) {
+      sound.playChime('success');
+      try { confetti({ particleCount: 35, spread: 60, origin: { y: 0.6 } }); } catch {}
+      onUpdateState(() => result.state!);
     }
-
-    onUpdateState(prev => {
-      const nextTasks = prev.tasks.map(t =>
-        t.id === task.id
-          ? {
-              ...t,
-              completed: true,
-              completedAtMinutes: currentMinutes,
-              completedAtDate: new Date().toISOString(),
-              executionStatus: 'ON_TIME' as const,
-              missedWindow: false,
-            }
-          : t
-      );
-
-      let nextState: AppState = {
-        ...prev,
-        tasks: nextTasks,
-        rewardPoints: prev.rewardPoints + 5,
-      };
-
-      nextState = logEventToState(
-        nextState,
-        'ActivityCompleted',
-        `Completed: ${task.title}`,
-        { taskId: task.id, completedAtMinutes: currentMinutes }
-      );
-
-      const scan = scanAndResolveDeviations(nextState);
-      return scan.updatedState;
-    });
   };
 
-  const handleApplyFallback = (tier: FallbackTier) => {
+  const handleApplyFallback = async (tier: FallbackTier) => {
     if (!task) return;
     sound.playChime('start');
-    onUpdateState(prev => {
-      const nextTasks = prev.tasks.map(t => {
-        if (t.id === task.id) {
-          const duration = tier.durationMinutes;
-          const endMin = (t.allocatedStartMinutes ?? t.startMinutes) + duration;
-          return {
-            ...t,
-            fallbackLevel: tier.level,
-            allocatedEndMinutes: endMin,
-            notes: `Fallback Level ${tier.level} applied: ${tier.title}`,
-          };
-        }
-        return t;
-      });
-
-      let nextState: AppState = {
-        ...prev,
-        tasks: nextTasks,
-      };
-
-      nextState = logEventToState(
-        nextState,
-        'FallbackTriggered',
-        `Applied Fallback Level ${tier.level} to ${task.title}`,
-        { taskId: task.id, tier }
-      );
-
-      const scan = scanAndResolveDeviations(nextState);
-      return scan.updatedState;
-    });
+    const result = await defaultApplicationService.triggerFallback(
+      task.id,
+      tier.level,
+      `User selected fallback: ${tier.title}`,
+      state
+    );
+    if (result.success && result.state) {
+      onUpdateState(() => result.state!);
+    }
     setShowFallbackSelector(false);
   };
 
-  const handleExecuteAdjustment = (e: React.FormEvent) => {
+  const handleExecuteAdjustment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!task || !overrideReason.trim()) return;
 
     sound.playChime('start');
-    onUpdateState(prev => {
-      let nextTasks = [...prev.tasks];
+    let result;
 
-      if (overrideAction === 'SKIP') {
-        nextTasks = nextTasks.map(t =>
-          t.id === task.id
-            ? { ...t, completed: true, executionStatus: 'MISSED_LATE' as const, notes: `Skipped by user: ${overrideReason}` }
-            : t
-        );
-      } else if (overrideAction === 'DEFER') {
-        // Shift task 60m later
-        nextTasks = nextTasks.map(t =>
-          t.id === task.id
-            ? { ...t, startMinutes: t.startMinutes + 60, endMinutes: t.endMinutes + 60, notes: `Deferred: ${overrideReason}` }
-            : t
-        );
-      } else if (overrideAction === 'COMPRESS') {
-        nextTasks = nextTasks.map(t =>
-          t.id === task.id
-            ? { ...t, endMinutes: t.startMinutes + Math.max(10, Math.floor((t.endMinutes - t.startMinutes) * 0.5)), notes: `Compressed: ${overrideReason}` }
-            : t
-        );
-      }
-
-      const overrideRecord = {
-        id: `ovr-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        activityId: task.id,
-        overrideType: overrideAction,
+    if (overrideAction === 'ADVANCE') {
+      result = await defaultApplicationService.advanceActivity(task.id, 30, overrideReason, state);
+    } else if (overrideAction === 'DEFER') {
+      result = await defaultApplicationService.deferActivity(task.id, 60, overrideReason, state);
+    } else if (overrideAction === 'COMPRESS') {
+      const currentDuration = (task.allocatedEndMinutes ?? task.endMinutes) - (task.allocatedStartMinutes ?? task.startMinutes);
+      result = await defaultApplicationService.compressActivity(task.id, Math.max(10, Math.floor(currentDuration * 0.5)), overrideReason, undefined, state);
+    } else if (overrideAction === 'SKIP') {
+      result = await defaultApplicationService.overrideActivity({
+        taskId: task.id,
+        overrideType: 'SKIP',
         reason: overrideReason,
-        previousState: task,
-        newState: nextTasks.find(t => t.id === task.id),
-      };
+        modifications: { completed: false, executionStatus: 'SKIPPED', notes: `Skipped by user: ${overrideReason}` },
+      }, state);
+    } else {
+      result = await defaultApplicationService.overrideActivity({
+        taskId: task.id,
+        overrideType: 'REPLACE',
+        reason: overrideReason,
+      }, state);
+    }
 
-      let nextState: AppState = {
-        ...prev,
-        tasks: nextTasks,
-        userOverrides: [overrideRecord, ...(prev.userOverrides || [])],
-      };
-
-      nextState = logEventToState(
-        nextState,
-        'OverrideCreated',
-        `User Override (${overrideAction}): ${task.title}`,
-        { override: overrideRecord },
-        'USER'
-      );
-
-      const scan = scanAndResolveDeviations(nextState);
-      return scan.updatedState;
-    });
+    if (result.success && result.state) {
+      onUpdateState(() => result.state!);
+    }
 
     setShowOverrideInput(false);
     setShowAdjustmentMenu(false);

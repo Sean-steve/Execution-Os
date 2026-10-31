@@ -204,7 +204,10 @@ export type AdaptationPatternType =
   | 'ALTERNATIVE_WINDOW_SUCCESS';
 
 export type TaskExecutionStatus = 
-  | 'ON_TIME' 
+  | 'ON_TIME'
+  | 'COMPLETED'
+  | 'PARTIAL'
+  | 'PENDING'
   | 'MISSED_LATE' 
   | 'COMPLETED_WITH_OVERRUN' 
   | 'DEGRADED_FALLBACK' 
@@ -457,6 +460,7 @@ export type EventType =
   | 'OverrideCreated'
   | 'DisciplinePenaltyRecorded'
   | 'PointsAwarded'
+  | 'RewardRedeemed'
   | 'PerformanceSessionCreated'
   | 'PerformancePreparationStarted'
   | 'PerformanceReady'
@@ -472,7 +476,17 @@ export type EventType =
   | 'PerformanceExtensionApproved'
   | 'PerformanceExtensionDenied'
   | 'PerformanceSessionClosed'
-  | 'PerformanceOutcomeEvaluated';
+  | 'PerformanceOutcomeEvaluated'
+  | 'DailyPerformanceReconciled'
+  | 'DailyPerformanceFinalized'
+  | 'WeeklyPerformanceReconciled'
+  | 'WeeklyPerformanceFinalized'
+  | 'DayOfWeekProfileUpdated'
+  | 'PerformancePatternDetected'
+  | 'WeeklyInsightGenerated'
+  | 'WeeklyAdaptationRecommendationCreated'
+  | 'WeeklyAdaptationRecommendationAccepted'
+  | 'WeeklyAdaptationRecommendationRejected';
 
 export interface SystemEventActorObject {
   type: 'SYSTEM' | 'USER' | 'ENGINE' | 'GOVERNANCE_GUARD' | 'HUMAN_OPERATOR';
@@ -1251,6 +1265,151 @@ export interface PerformanceSession {
   updatedAtUtc: string;
 }
 
+
+// ==========================================
+// EOS-WPI-001 WEEKLY PERFORMANCE INTELLIGENCE
+// ==========================================
+
+export type PerformanceDimensionKey =
+  | 'PRIORITY_WEIGHTED_OUTCOMES'
+  | 'EXECUTION_RELIABILITY'
+  | 'FOCUS_PERFORMANCE'
+  | 'PHYSICAL_EXECUTION'
+  | 'RECOVERY_EFFECTIVENESS'
+  | 'PROTECTED_COMMITMENT_INTEGRITY'
+  | 'TRADING_DISCIPLINE'
+  | 'SCHEDULE_INTEGRITY'
+  | 'LIFE_QUALITY_PROXY';
+
+export type PerformanceConfidence = 'INSUFFICIENT' | 'EMERGING' | 'MODERATE' | 'STRONG';
+
+export interface PerformanceDimensionScore {
+  dimension: PerformanceDimensionKey;
+  value: number;
+  weight: number;
+  evidenceCount: number;
+  confidence: PerformanceConfidence;
+  explanation: string;
+}
+
+export interface PlannedLoadScore {
+  value: number;
+  priorityLoad: number;
+  cognitiveLoad: number;
+  physicalLoad: number;
+  externalCommitmentLoad: number;
+  dependencyComplexity: number;
+  compressionFactor: number;
+  protectedCommitmentDensity: number;
+  contextSwitchLoad: number;
+  recoveryDemand: number;
+}
+
+export interface DailyPerformanceRecord {
+  id: string;
+  userId: string;
+  localDate: string;
+  timezone: string;
+  weekId: string;
+  routineVersionId?: string;
+  mode: SystemMode;
+  dayType: DayType;
+  plannedLoadScore: PlannedLoadScore;
+  dimensionScores: PerformanceDimensionScore[];
+  priorityWeightedOutcomeScore: number;
+  executionReliabilityScore: number;
+  focusPerformanceScore: number;
+  physicalExecutionScore: number;
+  protectedCommitmentIntegrityScore: number;
+  tradingDisciplineScore: number | null;
+  recoveryEffectivenessScore: number;
+  scheduleIntegrityScore: number;
+  lifeQualityProxyScore: number | null;
+  sustainablePerformanceIndex: number;
+  overallDailyPerformanceScore: number;
+  adjustedDayStrength: number;
+  confidence: PerformanceConfidence;
+  sourceEvidenceCount: number;
+  topExplanatoryFactors: string[];
+  algorithmVersion: string;
+  weightVersion: string;
+  createdAtUtc: string;
+  finalizedAtUtc?: string;
+}
+
+export interface WeeklyInsight {
+  id: string;
+  weekId: string;
+  finding: string;
+  whyItMatters: string;
+  evidenceWindow: string;
+  sampleSize: number;
+  effectSize?: number;
+  confidence: PerformanceConfidence;
+  recommendation?: string;
+}
+
+export interface WeeklyAdaptationRecommendation {
+  id: string;
+  sourceInsightId: string;
+  targetEngine: 'HEE-003' | 'HEE-006' | 'HEE-010';
+  proposedChange: string;
+  expectedBenefit: string;
+  risk: 'LOW' | 'MEDIUM' | 'HIGH';
+  reversible: boolean;
+  evidenceCount: number;
+  status: 'PROPOSED' | 'ACCEPTED' | 'REJECTED' | 'TRIAL' | 'KEPT' | 'ROLLED_BACK' | 'INCONCLUSIVE';
+  createdAtUtc: string;
+}
+
+export interface WeeklyPerformanceRecord {
+  id: string;
+  userId: string;
+  weekId: string;
+  startDate: string;
+  endDate: string;
+  timezone: string;
+  dailyRecordIds: string[];
+  overallWeeklyPerformanceScore: number;
+  weeklyPlannedLoad: number;
+  weeklyOutcomeAchievement: number;
+  weeklyRecoveryEffectiveness: number;
+  protectedCommitmentIntegrity: number;
+  focusPerformance: number;
+  physicalPerformance: number;
+  tradingDiscipline: number | null;
+  bestDayDate?: string;
+  lowestDayDate?: string;
+  bestDayByDimension: Partial<Record<PerformanceDimensionKey, string>>;
+  confidence: PerformanceConfidence;
+  insights: WeeklyInsight[];
+  recommendationIds: string[];
+  algorithmVersion: string;
+  createdAtUtc: string;
+  finalizedAtUtc?: string;
+}
+
+export interface DayOfWeekPerformanceProfile {
+  id: string;
+  userId: string;
+  weekday: number; // 0=Sunday ... 6=Saturday
+  weekdayLabel: string;
+  windowStart: string;
+  windowEnd: string;
+  sampleCount: number;
+  medianAdjustedStrength: number;
+  meanAdjustedStrength: number;
+  variance: number;
+  meanFocusPerformance: number;
+  meanOutcomeAchievement: number;
+  meanRecoveryEffectiveness: number;
+  meanProtectedCommitmentIntegrity: number;
+  confidence: PerformanceConfidence;
+  strongestObservedWindow?: string;
+  explanatoryFactors: string[];
+  updatedAtUtc: string;
+}
+
 export interface AppState {
   activeDate?: string; // "YYYY-MM-DD"
   timezone?: string; // "UTC", "America/New_York", etc.
@@ -1299,6 +1458,11 @@ export interface AppState {
   conflictLog?: ConflictResolutionRecord[];
   performanceSessions?: PerformanceSession[];
   activePerformanceSessionId?: string | null;
+  dailyPerformanceRecords?: DailyPerformanceRecord[];
+  weeklyPerformanceRecords?: WeeklyPerformanceRecord[];
+  dayOfWeekPerformanceProfiles?: DayOfWeekPerformanceProfile[];
+  weeklyInsights?: WeeklyInsight[];
+  weeklyAdaptationRecommendations?: WeeklyAdaptationRecommendation[];
   activeTimers: {
     outdoorLight: { isRunning: boolean; startedAt: number | null; accumulatedSeconds: number; targetSeconds: number };
     meditation: { isRunning: boolean; startedAt: number | null; accumulatedSeconds: number; targetSeconds: number };

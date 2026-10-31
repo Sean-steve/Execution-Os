@@ -21,6 +21,7 @@ import { sound } from '../services/soundService';
 import { getActiveDayTheme } from '../services/dayThemeService';
 import { replenishRewardsCatalog } from '../services/rewardCatalogService';
 import confetti from 'canvas-confetti';
+import { defaultApplicationService } from '../services/executionApplicationService';
 
 interface RewardEngineViewProps {
   state: AppState;
@@ -39,35 +40,17 @@ export const RewardEngineView: React.FC<RewardEngineViewProps> = ({
 
   const lateTasks = state.tasks.filter(t => t.completed && t.missedWindow);
 
-  const handleUnlockAndRedeem = (reward: Reward) => {
+  const handleUnlockAndRedeem = async (reward: Reward) => {
     if (state.rewardPoints < reward.pointsRequired && !reward.unlocked) return;
+    const result = await defaultApplicationService.redeemReward(reward.id, state);
+    if (!result.success || !result.state) return;
 
+    const replenished = replenishRewardsCatalog(result.state.rewards);
+    onUpdateState(() => ({ ...result.state!, rewards: replenished }));
     sound.playChime('success');
     try {
-      confetti({
-        particleCount: 70,
-        spread: 80,
-        origin: { y: 0.5 },
-        colors: [activeTheme.colorHex, '#ec4899', '#8b5cf6', '#10b981'],
-      });
-    } catch {
-      // ignore
-    }
-
-    onUpdateState(prev => {
-      const updatedRewards = prev.rewards.map(r =>
-        r.id === reward.id
-          ? { ...r, unlocked: true, redeemed: true, redeemedAt: new Date().toISOString() }
-          : r
-      );
-      // Auto-replenish catalog when redeemed
-      const replenished = replenishRewardsCatalog(updatedRewards);
-      return {
-        ...prev,
-        rewardPoints: Math.max(0, prev.rewardPoints - reward.pointsRequired),
-        rewards: replenished,
-      };
-    });
+      confetti({ particleCount: 70, spread: 80, origin: { y: 0.5 }, colors: [activeTheme.colorHex, '#ec4899', '#8b5cf6', '#10b981'] });
+    } catch {}
   };
 
   const handleCreateCustomReward = (e: React.FormEvent) => {

@@ -291,7 +291,9 @@ export class FileDurableEventStore implements IDurableEventStore {
         const dir = path.dirname(this.filePath);
         await this.fs!.mkdir(dir, { recursive: true });
         const allEvents = await this.memoryStore.getEvents({ limit: 10000 });
-        const tmpPath = `${this.filePath}.${Date.now()}.tmp`;
+        const pid = typeof process !== 'undefined' ? process.pid : 0;
+        const nonce = Math.random().toString(36).slice(2, 10);
+        const tmpPath = `${this.filePath}.${pid}.${Date.now()}.${nonce}.tmp`;
         await this.fs!.writeFile(tmpPath, JSON.stringify(allEvents, null, 2), 'utf-8');
         await this.fs!.rename(tmpPath, this.filePath);
       } catch (err) {

@@ -47,12 +47,6 @@ export const NavigationTabs: React.FC<NavigationTabsProps> = ({
       badge: 'Active',
     },
     {
-      id: 'PERFORMANCE' as const,
-      matchingViews: ['PERFORMANCE'],
-      label: 'Focus Engine',
-      icon: Sparkles,
-    },
-    {
       id: 'TODAY' as const,
       matchingViews: ['TODAY', 'ALL_TASKS'],
       label: 'Today',

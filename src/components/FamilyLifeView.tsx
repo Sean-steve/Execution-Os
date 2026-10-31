@@ -16,6 +16,7 @@ import {
 import { AppState } from '../types';
 import { sound } from '../services/soundService';
 import confetti from 'canvas-confetti';
+import { defaultApplicationService } from '../services/executionApplicationService';
 
 interface FamilyLifeViewProps {
   state: AppState;
@@ -68,40 +69,35 @@ export const FamilyLifeView: React.FC<FamilyLifeViewProps> = ({
     },
   ];
 
-  const handleCompleteConnection = () => {
-    sound.playChime('success');
-    try {
-      confetti({ particleCount: 40, spread: 60, origin: { y: 0.5 } });
-    } catch {
-      // ignore
+  const handleCompleteConnection = async () => {
+    let workingState = state;
+    for (const taskId of ['task-family-connection', 'task-family-outing']) {
+      const task = workingState.tasks.find(t => t.id === taskId);
+      if (!task || task.completed) continue;
+      const result = await defaultApplicationService.completeActivity({ taskId, executionStatus: 'ON_TIME' }, workingState);
+      if (result.success && result.state) workingState = result.state;
     }
-
-    onUpdateState(prev => ({
-      ...prev,
-      tasks: prev.tasks.map(t =>
-        t.id === 'task-family-connection' || t.id === 'task-family-outing'
-          ? { ...t, completed: true }
-          : t
-      ),
-      rewardPoints: prev.rewardPoints + 8,
-    }));
+    sound.playChime('success');
+    try { confetti({ particleCount: 40, spread: 60, origin: { y: 0.5 } }); } catch {}
+    onUpdateState(() => workingState);
     setFamilyPointsAwarded(true);
   };
 
-  const handleLogAfternoonWorkout = () => {
+  const handleLogAfternoonWorkout = async () => {
     sound.playChime('start');
-    onUpdateState(prev => {
-      const nextSets = prev.afternoonWorkoutSetsDone + 1;
-      const isDone = nextSets >= 3;
-      return {
-        ...prev,
-        afternoonWorkoutSetsDone: nextSets,
-        tasks: prev.tasks.map(t =>
-          t.id === 'task-afternoon-workout' ? { ...t, completed: isDone } : t
-        ),
-        rewardPoints: prev.rewardPoints + (isDone ? 5 : 2),
-      };
-    });
+    const current = Math.min(3, state.afternoonWorkoutSetsDone || 0);
+    if (current >= 3) return;
+    const nextSets = current + 1;
+    let workingState: AppState = { ...state, afternoonWorkoutSetsDone: nextSets };
+
+    if (nextSets >= 3) {
+      const result = await defaultApplicationService.completeActivity({
+        taskId: 'task-afternoon-workout',
+        executionStatus: 'ON_TIME',
+      }, workingState);
+      if (result.success && result.state) workingState = result.state;
+    }
+    onUpdateState(() => workingState);
   };
 
   return (
