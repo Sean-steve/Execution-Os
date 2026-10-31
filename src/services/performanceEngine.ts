@@ -21,6 +21,7 @@ import {
 import { defaultClock, IClock } from '../clock';
 import { CANONICAL_PERFORMANCE_PROTOCOLS, getProtocolForActivity } from '../data/performanceProtocols';
 import { defaultEventDispatcher } from './eventDispatcher';
+import { evaluatePerformanceExtensionAllocation } from './allocationEngine';
 
 function publishPerformanceEvent(event: {
   event_type: any;
@@ -516,76 +517,48 @@ export class HumanPerformanceEngine {
     reasonText: string;
   } {
     const nowUtc = this.clock.toISOString();
-
-    const currentTask = state.tasks.find(t => t.id === session.activityInstanceId);
-    const newProposedEnd = (currentTask?.endMinutes || session.effectiveAllocationEndMinutes) + requestedMinutes;
-
-    // Check if any protected commitment or hard anchor is violated
-    const nextProtectedTask = state.tasks.find(t =>
-      t.id !== session.activityInstanceId &&
-      (t.isProtected || t.interactiveActionType === 'FAMILY_OUTING' || t.isNonNegotiable) &&
-      t.startMinutes < newProposedEnd &&
-      t.startMinutes >= (currentTask?.startMinutes || session.effectiveAllocationStartMinutes)
+    const allocationDecision = evaluatePerformanceExtensionAllocation(
+      state,
+      session.activityInstanceId,
+      requestedMinutes
     );
-
-    const approved = !nextProtectedTask;
-    const decisionReason = approved
-      ? `${requestedMinutes} minutes extended. Downstream schedule safe.`
-      : `Cannot extend ${requestedMinutes}m without invading protected ${nextProtectedTask?.title || 'commitment'} at ${nextProtectedTask?.startMinutes || 0}m.`;
 
     const extensionReq: PerformanceExtensionRequest = {
       id: `ext-${Date.now()}`,
       sessionId: session.id,
       requestedMinutes,
       reason,
-      status: approved ? 'APPROVED' : 'DENIED',
+      status: allocationDecision.approved ? 'APPROVED' : 'DENIED',
       evaluatedAtUtc: nowUtc,
-      governanceDecisionReason: decisionReason,
-      resultingAllocatedEndMinutes: approved ? newProposedEnd : undefined
+      governanceDecisionReason: allocationDecision.reason,
+      resultingAllocatedEndMinutes: allocationDecision.resultingAllocatedEndMinutes,
     };
 
     const updatedSession: PerformanceSession = {
       ...session,
       extensionRequests: [...session.extensionRequests, extensionReq],
-      effectiveAllocationEndMinutes: approved ? newProposedEnd : session.effectiveAllocationEndMinutes,
-      targetDurationMinutes: approved ? session.targetDurationMinutes + requestedMinutes : session.targetDurationMinutes,
+      effectiveAllocationEndMinutes: allocationDecision.approved
+        ? allocationDecision.resultingAllocatedEndMinutes || session.effectiveAllocationEndMinutes
+        : session.effectiveAllocationEndMinutes,
+      targetDurationMinutes: allocationDecision.approved
+        ? session.targetDurationMinutes + requestedMinutes
+        : session.targetDurationMinutes,
       version: session.version + 1,
-      updatedAtUtc: nowUtc
+      updatedAtUtc: nowUtc,
     };
 
-    let updatedTasks = state.tasks;
-    if (approved) {
-      updatedTasks = state.tasks.map(t => {
-        if (t.id === session.activityInstanceId) {
-          return { ...t, endMinutes: newProposedEnd };
-        }
-        // Shift flexible non-protected upcoming tasks forward if needed
-        if (!t.isProtected && !t.isNonNegotiable && t.startMinutes < newProposedEnd && t.startMinutes >= (currentTask?.endMinutes || 0)) {
-          const shift = requestedMinutes;
-          return { ...t, startMinutes: t.startMinutes + shift, endMinutes: t.endMinutes + shift };
-        }
-        return t;
-      });
-    }
-
-    const nextSessions = (state.performanceSessions || []).map(s => s.id === updatedSession.id ? updatedSession : s);
-
-    publishPerformanceEvent({
-      event_type: approved ? 'PerformanceExtensionApproved' : 'PerformanceExtensionDenied',
-      actor: { type: 'GOVERNANCE_GUARD', id: 'hee-010-governance' },
-      subject: { type: 'ACTIVITY_INSTANCE', id: session.activityInstanceId },
-      payload: { sessionId: session.id, requestedMinutes, approved, decisionReason }
-    });
+    const updatedState: AppState = {
+      ...allocationDecision.state,
+      performanceSessions: (allocationDecision.state.performanceSessions || []).map(s =>
+        s.id === updatedSession.id ? updatedSession : s
+      ),
+    };
 
     return {
-      updatedState: {
-        ...state,
-        tasks: updatedTasks,
-        performanceSessions: nextSessions
-      },
+      updatedState,
       updatedSession,
-      approved,
-      reasonText: decisionReason
+      approved: allocationDecision.approved,
+      reasonText: allocationDecision.reason,
     };
   }
 
