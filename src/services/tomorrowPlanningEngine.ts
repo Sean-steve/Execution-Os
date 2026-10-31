@@ -20,6 +20,7 @@ import { evaluateRoutineState } from './routineEngine';
 import { getFallbackPolicyForTask, selectOptimalFallbackTier } from './fallbackEngine';
 import { createSystemEvent } from './eventBus';
 import { getAutonomousNextAction } from './storageService';
+import { getProtectedScheduleWindows } from './scheduleAuthorityService';
 
 export const MANDATORY_ANCHORS_BASELINE_MINUTES = 180; // Baseline core anchors (Morning prime, Command center, Lunch, Review)
 export const PROTECTED_FAMILY_DURATION_MINUTES = 210;  // 16:00 to 19:30 (3.5 hours)
@@ -38,6 +39,83 @@ export const evaluateTomorrowFeasibility = (
   plan: TomorrowPlan,
   currentState?: AppState
 ): TomorrowFeasibilityResult => {
+  if (currentState?.scheduleAuthority?.mode === 'HOS_DELEGATED') {
+    const authority = currentState.scheduleAuthority;
+    const protectedWindows = getProtectedScheduleWindows({ ...currentState, tomorrowPlan: plan });
+    const approvedExecutionMinutes = authority.approvedWindows
+      .filter(w => w.type === 'EXECUTION_ALLOWED')
+      .reduce((sum, w) => sum + Math.max(0, w.endMinutes - w.startMinutes), 0);
+    const protectedMinutes = protectedWindows.reduce(
+      (sum, w) => sum + Math.max(0, w.endMinutes - w.startMinutes),
+      0
+    );
+    const desiredActivities = Array.isArray(plan.desiredActivities) ? plan.desiredActivities : [];
+    const appointments = Array.isArray(plan.appointments) ? plan.appointments : [];
+    const customActivitiesMinutes = desiredActivities.reduce(
+      (sum, activity) => sum + Math.max(0, activity.durationMinutes || 0),
+      0
+    );
+    const appointmentsMinutes = appointments.reduce(
+      (sum, apt) => sum + Math.max(0, apt.endMinutes - apt.startMinutes),
+      0
+    );
+    const requestedMinutes = customActivitiesMinutes + appointmentsMinutes;
+
+    const conflicts: TomorrowConflict[] = [];
+    for (const apt of appointments) {
+      const conflict = protectedWindows.find(w =>
+        apt.startMinutes < w.endMinutes && apt.endMinutes > w.startMinutes
+      );
+      if (conflict && !apt.isProtected) {
+        conflicts.push({
+          id: `hos-protected-conflict-${apt.id}`,
+          severity: 'CRITICAL',
+          message: `"${apt.title}" conflicts with protected HOS commitment "${conflict.label || conflict.id}".`,
+          impactedItemIds: [apt.id, conflict.id],
+          resolutionOptions: ['Request a schedule change from HumanKernelOS.'],
+        });
+      }
+    }
+
+    if (requestedMinutes > approvedExecutionMinutes && authority.approvedWindows.length > 0) {
+      conflicts.push({
+        id: 'hos-approved-capacity-exceeded',
+        severity: 'CRITICAL',
+        message: `Requested execution load (${requestedMinutes}m) exceeds HOS-approved execution capacity (${approvedExecutionMinutes}m).`,
+        resolutionOptions: ['Reduce requested execution load', 'Request additional execution capacity from HumanKernelOS'],
+      });
+    }
+
+    const bufferMinutes = Math.max(0, approvedExecutionMinutes - requestedMinutes);
+    const denominator = Math.max(1, approvedExecutionMinutes);
+    const bufferPercentage = Math.round((bufferMinutes / denominator) * 100);
+    const score = conflicts.some(c => c.severity === 'CRITICAL')
+      ? Math.max(0, 60 - conflicts.length * 20)
+      : Math.min(100, 80 + Math.round(bufferPercentage / 5));
+
+    return {
+      predictedMode: currentState.currentMode,
+      predictedDayType: currentState.dayType,
+      predictedRoutineState: currentState.routineState,
+      feasibilityScore: score,
+      isFeasible: !conflicts.some(c => c.severity === 'CRITICAL'),
+      summary: conflicts.length
+        ? 'HOS Daily Operating Plan constraints require host reconciliation before activation.'
+        : 'Requested execution fits within the current HOS-approved execution envelope.',
+      capacity: {
+        awakeMinutesAvailable: approvedExecutionMinutes + protectedMinutes,
+        mandatoryAnchorMinutes: 0,
+        customActivitiesMinutes,
+        appointmentsMinutes,
+        protectedFamilyMinutes: protectedMinutes,
+        totalCommittedMinutes: requestedMinutes + protectedMinutes,
+        bufferMinutes,
+        bufferPercentage,
+      },
+      conflicts,
+      timelinePreview: currentState.dynamicAllocations,
+    };
+  }
   const wakeMinutes = plan.desiredWakeMinutes || (plan.desiredWakeTime ? parseTimeToMinutes(plan.desiredWakeTime) : (plan.wakeTime ? parseTimeToMinutes(plan.wakeTime) : 330));
   const awakeMinutesAvailable = Math.max(60, NIGHT_SHUTDOWN_TIME_MINUTES - wakeMinutes);
 
