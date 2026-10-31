@@ -152,6 +152,7 @@ export class EntityMapper {
 
     // 4. Activity Definitions & Routine Steps
     (state.activities || []).forEach((act, idx) => {
+      const correspondingTask = (state.tasks || []).find(task => task.id === act.id);
       const actDef: ActivityDefinitionEntity = {
         id: act.id,
         userId: this.userId,
@@ -172,8 +173,8 @@ export class EntityMapper {
         fallbackPolicyId: act.fallbackPolicyId,
         autonomyLevel: act.autonomyLevel,
         modesAllowed: act.modesAllowed,
-        isProtectedCommitment: act.isProtectedCommitment,
-        interactiveActionType: act.interactiveActionType,
+        isProtectedCommitment: act.isProtectedCommitment || correspondingTask?.isProtected || false,
+        interactiveActionType: act.interactiveActionType || correspondingTask?.interactiveActionType,
         associatedPillar: act.associatedPillar,
         version: 1,
         createdAtUtc: nowUtc,
@@ -181,7 +182,7 @@ export class EntityMapper {
       };
       schema.activity_definitions.push(actDef);
 
-      if (act.isProtectedCommitment) {
+      if (actDef.isProtectedCommitment) {
         schema.protected_commitments.push({
           id: `prot_${act.id}`,
           userId: this.userId,
@@ -207,13 +208,82 @@ export class EntityMapper {
         nominalStartMinutes: 0,
         nominalEndMinutes: act.estimatedDuration,
         isNonNegotiable: act.priority >= 4,
-        isProtected: !!act.isProtectedCommitment,
+        isProtected: !!actDef.isProtectedCommitment,
         modesAllowed: act.modesAllowed,
         version: 1,
         createdAtUtc: nowUtc,
         updatedAtUtc: nowUtc,
       });
     });
+
+    // HOS / external plan tasks may arrive without a pre-existing ActivityDefinition.
+    // Materialize a generic execution definition so protection and schedule identity
+    // survive canonical persistence/restart without importing whole-person policy.
+    (state.tasks || [])
+      .filter(task => !schema.activity_definitions.some(def => def.id === task.id))
+      .forEach((task, idx) => {
+        const duration = Math.max(1, task.endMinutes - task.startMinutes);
+        const derived: ActivityDefinitionEntity = {
+          id: task.id,
+          userId: this.userId,
+          anchorId: task.anchorId,
+          title: task.title,
+          objective: task.subtext || task.title,
+          mission: '',
+          priority: task.isNonNegotiable || task.isProtected ? 5 : 3,
+          estimatedDuration: duration,
+          minimumDuration: Math.min(duration, Math.max(1, Math.floor(duration * 0.5))),
+          preferredDuration: duration,
+          energyRequirement: 'MEDIUM',
+          focusRequirement: task.interactiveActionType === 'FOCUS_BLOCK' ? 'HIGH' : 'MEDIUM',
+          locationRequirement: 'ANY',
+          prerequisites: [],
+          completionCriteria: 'Authoritative execution outcome recorded.',
+          verificationMethod: 'MANUAL_CHECK',
+          fallbackPolicyId: '',
+          autonomyLevel: 2,
+          modesAllowed: task.modesAllowed || ['GREEN', 'YELLOW', 'RED'],
+          isProtectedCommitment: Boolean(task.isProtected),
+          interactiveActionType: task.interactiveActionType,
+          associatedPillar: task.associatedPillar,
+          version: 1,
+          createdAtUtc: nowUtc,
+          updatedAtUtc: nowUtc,
+        };
+        schema.activity_definitions.push(derived);
+
+        schema.routine_steps.push({
+          id: `step_${routineVersionId}_${task.id}`,
+          routineVersionId,
+          activityDefinitionId: task.id,
+          userId: this.userId,
+          orderIndex: (state.activities || []).length + idx,
+          anchorId: task.anchorId,
+          nominalStartMinutes: task.startMinutes,
+          nominalEndMinutes: task.endMinutes,
+          isNonNegotiable: task.isNonNegotiable,
+          isProtected: Boolean(task.isProtected),
+          modesAllowed: task.modesAllowed || ['GREEN', 'YELLOW', 'RED'],
+          version: 1,
+          createdAtUtc: nowUtc,
+          updatedAtUtc: nowUtc,
+        });
+
+        if (task.isProtected) {
+          schema.protected_commitments.push({
+            id: `prot_${task.id}`,
+            userId: this.userId,
+            activityDefinitionId: task.id,
+            label: task.title,
+            reason: 'Protected commitment supplied by the active schedule authority.',
+            neverCompress: true,
+            neverSkip: true,
+            version: 1,
+            createdAtUtc: nowUtc,
+            updatedAtUtc: nowUtc,
+          });
+        }
+      });
 
     // 5. Activity Instances (Instances != definitions)
     const todayStr = new Date().toISOString().split('T')[0];
