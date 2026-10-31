@@ -23,6 +23,9 @@ export interface HOSReadinessSnapshot {
     identityMode: boolean;
     eventMeshTransport: boolean;
     runtimeStorageIsolation: boolean;
+    durableStorageRoot: boolean;
+    backupEvidence: boolean;
+    restoreEvidence: boolean;
   };
   errors: string[];
   warnings: string[];
@@ -37,6 +40,15 @@ function isPathInside(candidate: string, parent: string): boolean {
 function positiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value || '', 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function evidenceIsFresh(value: string | undefined, maxAgeDays: number): boolean {
+  if (!value) return false;
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return false;
+  const now = Date.now();
+  if (timestamp > now + 5 * 60 * 1000) return false;
+  return now - timestamp <= maxAgeDays * 24 * 60 * 60 * 1000;
 }
 
 export function validateHOSProductionRuntime(): HOSProductionRuntimeValidation {
@@ -84,13 +96,49 @@ export function validateHOSProductionRuntime(): HOSProductionRuntimeValidation {
   const dlqPath = path.resolve(
     process.env.HEE_DLQ_PATH || path.join(cwd, 'data', 'dead_letter_queue.json')
   );
+  const canonicalDbPath = path.resolve(
+    process.env.HEE_DATABASE_PATH || path.join(cwd, 'data', 'canonical_execution_db.json')
+  );
 
-  if (isPathInside(boundaryPath, sourceDir) || isPathInside(subjectDir, sourceDir) || isPathInside(dlqPath, sourceDir)) {
+  if (
+    isPathInside(boundaryPath, sourceDir) ||
+    isPathInside(subjectDir, sourceDir) ||
+    isPathInside(dlqPath, sourceDir) ||
+    isPathInside(canonicalDbPath, sourceDir)
+  ) {
     errors.push('Production runtime state must not be stored inside the source tree.');
   }
 
-  if (boundaryPath === subjectDir || boundaryPath === dlqPath) {
-    errors.push('HOS boundary, subject-state, and dead-letter storage locations must be distinct.');
+  if (
+    boundaryPath === subjectDir ||
+    boundaryPath === dlqPath ||
+    boundaryPath === canonicalDbPath ||
+    subjectDir === dlqPath ||
+    subjectDir === canonicalDbPath ||
+    dlqPath === canonicalDbPath
+  ) {
+    errors.push('Canonical database, HOS boundary, subject-state, and dead-letter storage locations must be distinct.');
+  }
+
+  const durableRootRaw = process.env.EXECUTION_OS_DURABLE_STORAGE_ROOT?.trim();
+  if (!durableRootRaw) {
+    errors.push('EXECUTION_OS_DURABLE_STORAGE_ROOT is required in production HOS mode.');
+  } else if (!path.isAbsolute(durableRootRaw)) {
+    errors.push('EXECUTION_OS_DURABLE_STORAGE_ROOT must be an absolute path.');
+  } else {
+    const durableRoot = path.resolve(durableRootRaw);
+    const storagePaths = [canonicalDbPath, boundaryPath, subjectDir, dlqPath];
+    if (storagePaths.some(storagePath => !isPathInside(storagePath, durableRoot))) {
+      errors.push('All production Execution OS state paths must be inside EXECUTION_OS_DURABLE_STORAGE_ROOT.');
+    }
+  }
+
+  if (!evidenceIsFresh(process.env.EXECUTION_OS_BACKUP_VERIFIED_AT, 30)) {
+    errors.push('Execution OS backup evidence is missing, invalid, or older than 30 days.');
+  }
+
+  if (!evidenceIsFresh(process.env.EXECUTION_OS_RESTORE_DRILL_VERIFIED_AT, 90)) {
+    errors.push('Execution OS restore-drill evidence is missing, invalid, or older than 90 days.');
   }
 
   const timeoutMs = positiveInteger(process.env.HOS_EVENT_MESH_TIMEOUT_MS, 5000);
@@ -122,6 +170,11 @@ export function getHOSReadinessSnapshot(): HOSReadinessSnapshot {
   const storageIsolated = !validation.errors.some(error =>
     /runtime state|storage locations/i.test(error)
   );
+  const durableStorageRoot = !validation.errors.some(error =>
+    /EXECUTION_OS_DURABLE_STORAGE_ROOT|state paths must be inside/i.test(error)
+  );
+  const backupEvidence = evidenceIsFresh(process.env.EXECUTION_OS_BACKUP_VERIFIED_AT, 30);
+  const restoreEvidence = evidenceIsFresh(process.env.EXECUTION_OS_RESTORE_DRILL_VERIFIED_AT, 90);
 
   const ready = validation.valid && (identityMode === 'HOS' || process.env.NODE_ENV !== 'production');
 
@@ -137,6 +190,9 @@ export function getHOSReadinessSnapshot(): HOSReadinessSnapshot {
       identityMode: identityMode === 'HOS',
       eventMeshTransport: transportSecure,
       runtimeStorageIsolation: storageIsolated,
+      durableStorageRoot,
+      backupEvidence,
+      restoreEvidence,
     },
     errors: validation.errors,
     warnings: validation.warnings,
