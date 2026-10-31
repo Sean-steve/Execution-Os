@@ -473,7 +473,17 @@ export type EventType =
   | 'PerformanceExtensionApproved'
   | 'PerformanceExtensionDenied'
   | 'PerformanceSessionClosed'
-  | 'PerformanceOutcomeEvaluated';
+  | 'PerformanceOutcomeEvaluated'
+  | 'DailyPerformanceReconciled'
+  | 'DailyPerformanceFinalized'
+  | 'WeeklyPerformanceReconciled'
+  | 'WeeklyPerformanceFinalized'
+  | 'DayOfWeekProfileUpdated'
+  | 'PerformancePatternDetected'
+  | 'WeeklyInsightGenerated'
+  | 'WeeklyAdaptationRecommendationCreated'
+  | 'WeeklyAdaptationRecommendationAccepted'
+  | 'WeeklyAdaptationRecommendationRejected';
 
 export interface SystemEventActorObject {
   type: 'SYSTEM' | 'USER' | 'ENGINE' | 'GOVERNANCE_GUARD' | 'HUMAN_OPERATOR';
