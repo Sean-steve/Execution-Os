@@ -107,6 +107,33 @@ export class TransactionPipeline {
     const performanceEngine = new HumanPerformanceEngine(clock);
     const createdEvents: SystemEvent[] = [];
 
+    const commitAllocationResult = (result: ReturnType<typeof calculateDynamicAllocations>) => {
+      state.dynamicAllocations = result.allocations;
+      state.tasks = result.recalculatedTasks;
+      state.lastReallocationReason = result.reallocationReason;
+
+      if (result.scheduleProposal) {
+        state.pendingScheduleProposals = [
+          ...(state.pendingScheduleProposals || []).filter(p => p.status === 'PROPOSED'),
+          result.scheduleProposal,
+        ];
+        createdEvents.push(createSystemEvent(
+          'ScheduleChangeProposed',
+          result.scheduleProposal.id,
+          {
+            planId: result.scheduleProposal.planId,
+            planRevision: result.scheduleProposal.planRevision,
+            reason: result.scheduleProposal.reason,
+            changes: result.scheduleProposal.changes,
+          },
+          state,
+          'SYSTEM_KERNEL',
+          undefined,
+          clock
+        ));
+      }
+    };
+
     // 2. VALIDATION STAGE
     if (command.validate) {
       const validation = command.validate(state, context);
@@ -280,8 +307,7 @@ export class TransactionPipeline {
 
           // Run allocations to adjust upcoming schedule cursor
           const allocs = calculateDynamicAllocations(state);
-          state.dynamicAllocations = allocs.allocations;
-          state.tasks = allocs.recalculatedTasks;
+          commitAllocationResult(allocs);
 
           const routineEval = evaluateRoutineState(state);
           state.routineState = routineEval.routineState;
@@ -306,8 +332,7 @@ export class TransactionPipeline {
         });
 
         const allocs = calculateDynamicAllocations(state);
-        state.dynamicAllocations = allocs.allocations;
-        state.tasks = allocs.recalculatedTasks;
+        commitAllocationResult(allocs);
 
         const evt = createSystemEvent('AllocationChanged', taskId, command.payload, state, 'USER', undefined, clock);
         createdEvents.push(evt);
@@ -383,8 +408,8 @@ export class TransactionPipeline {
         });
 
         const allocs = calculateDynamicAllocations(state);
-        state.dynamicAllocations = allocs.allocations;
-        state.tasks = allocs.recalculatedTasks.map(t =>
+        commitAllocationResult(allocs);
+        state.tasks = state.tasks.map(t =>
           t.id === taskId
             ? { ...t, fallbackLevel: targetLevel, executionStatus: 'COMPRESSED' }
             : t
@@ -447,8 +472,7 @@ export class TransactionPipeline {
         state = devScan.updatedState;
 
         const allocs = calculateDynamicAllocations(state);
-        state.dynamicAllocations = allocs.allocations;
-        state.tasks = allocs.recalculatedTasks;
+        commitAllocationResult(allocs);
 
         const routineEval = evaluateRoutineState(state);
         state.routineState = routineEval.routineState;
@@ -484,15 +508,13 @@ export class TransactionPipeline {
       } else if (command instanceof SetSystemModeCommand) {
         state.currentMode = command.payload.mode;
         const allocs = calculateDynamicAllocations(state);
-        state.dynamicAllocations = allocs.allocations;
-        state.tasks = allocs.recalculatedTasks;
+        commitAllocationResult(allocs);
         const evt = createSystemEvent('RoutineChanged', 'mode', { mode: command.payload.mode }, state, 'USER', undefined, clock);
         createdEvents.push(evt);
       } else if (command instanceof SetDayTypeCommand) {
         state.dayType = command.payload.dayType;
         const allocs = calculateDynamicAllocations(state);
-        state.dynamicAllocations = allocs.allocations;
-        state.tasks = allocs.recalculatedTasks;
+        commitAllocationResult(allocs);
         const evt = createSystemEvent('RoutineChanged', 'dayType', { dayType: command.payload.dayType }, state, 'USER', undefined, clock);
         createdEvents.push(evt);
       } else if (command instanceof SetSimulatedTimeCommand) {
