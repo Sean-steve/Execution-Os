@@ -386,10 +386,29 @@ export class ExecutionEventChainService {
       this.clock
     );
 
+    const evt3 = createSystemEvent(
+      'ExternalExecutionGateUpdated',
+      {
+        subject: { type: 'activity', id: targetActivityId, title: 'Bounded External Action' },
+        correlationId,
+        causationId: evt2.event_id,
+        engine: 'ExecutionBoundary',
+        policy: 'ExternalExecutionGateContract',
+        rationale: isAuthorized
+          ? 'Execution boundary confirmed the external authorization.'
+          : 'Execution boundary preserved the external-domain block.',
+      },
+      { sourceEngine, targetActivityId, executionEligible: isAuthorized },
+      {},
+      'GOVERNANCE_GUARD',
+      evt2.event_id,
+      this.clock
+    );
+
     return {
       chainName: 'External Gate Eligibility',
       correlationId,
-      events: [evt1, evt2],
+      events: [evt1, evt2, evt3],
     };
   }
 
