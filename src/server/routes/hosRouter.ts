@@ -17,6 +17,20 @@ import {
 import { HOSCapabilityService } from '../../hos/capabilityService';
 import { ApiError, AuthenticationError, ValidationError } from '../errors';
 
+function stableFingerprint(value: any): string {
+  const normalize = (input: any): any => {
+    if (Array.isArray(input)) return input.map(normalize);
+    if (input && typeof input === 'object') {
+      return Object.keys(input).sort().reduce((out, key) => {
+        out[key] = normalize(input[key]);
+        return out;
+      }, {} as Record<string, any>);
+    }
+    return input;
+  };
+  return JSON.stringify(normalize(value));
+}
+
 function subjectFrom(req: Request): HOSSubjectContext {
   if (!req.hosSubject) {
     throw new AuthenticationError('HumanKernelOS subject assertion is required for this integration endpoint.');
@@ -106,7 +120,7 @@ export function createHOSRouter(
       if (!idempotencyKey) throw new ValidationError('HOS signals require an Idempotency-Key.');
 
       const scopedKey = `${subject.tenantId}::${subject.subjectId}::${type}::${idempotencyKey}`;
-      const fingerprint = JSON.stringify(payload);
+      const fingerprint = stableFingerprint(payload);
       const cached = signalIdempotency.get(scopedKey);
       if (cached) {
         if (cached.fingerprint !== fingerprint) {
