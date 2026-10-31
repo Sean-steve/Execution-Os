@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { ScenarioBuilder } from './fixtures/scenarioBuilder';
 import { evaluateRoutineState } from '../services/routineEngine';
-import { calculateDynamicAllocations, PROTECTED_FAMILY_START, PROTECTED_FAMILY_END } from '../services/allocationEngine';
+import { calculateDynamicAllocations } from '../services/allocationEngine';
+import { PROTECTED_FAMILY_START, PROTECTED_FAMILY_END } from './fixtures/legacyStandaloneScheduleConstants';
 import { scanAndResolveDeviations } from '../services/deviationEngine';
 import { getAutonomousNextDecision } from '../services/decisionEngine';
 import { selectOptimalFallbackTier, getFallbackPolicyForTask } from '../services/fallbackEngine';
