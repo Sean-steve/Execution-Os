@@ -1,5 +1,6 @@
 import { AppState, RoutineTask, ActivityDependency, DependencyType } from '../types';
 import { evaluateExternalExecutionGates } from './externalExecutionGate';
+import { applyLegacyTradingProtocolUpdate } from '../adapters/legacyTradingCompatibilityAdapter';
 
 export interface DependencyCheckResult {
   isBlocked: boolean;
@@ -28,7 +29,11 @@ export const checkTaskDependencies = (
   const blockingTaskIds: string[] = [];
 
   // Domain-neutral boundary: external engines express policy as execution gates.
-  const externalGateCheck = evaluateExternalExecutionGates(state, taskId);
+  // Legacy standalone fixtures are translated by an isolated compatibility adapter.
+  const gateState = (state as any).legacyStandaloneCompatibility
+    ? applyLegacyTradingProtocolUpdate(state, {})
+    : state;
+  const externalGateCheck = evaluateExternalExecutionGates(gateState, taskId);
   if (externalGateCheck.isBlocked) {
     blockingReasons.push(...externalGateCheck.blockingReasons);
     blockingTaskIds.push(...externalGateCheck.gateIds.map(id => `external-gate:${id}`));
