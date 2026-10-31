@@ -1,5 +1,4 @@
 import { AppState, RoutineTask, UserOverrideRecord } from '../types';
-import { PROTECTED_FAMILY_START, PROTECTED_FAMILY_END } from '../services/allocationEngine';
 import { checkTaskDependencies } from '../services/dependencyEngine';
 import {
   GovernanceDeniedError,
@@ -9,6 +8,7 @@ import {
   SecurityIntegrityError
 } from './errors';
 import { SecurityEngine } from './security';
+import { domainExecutionPolicies } from '../domainPolicies';
 
 export interface GovernanceEvaluationResult {
   allowed: boolean;
@@ -33,32 +33,18 @@ export class GovernanceEngine {
    * Evaluates if an activity can be started (G1, G3, G4 enforcement)
    */
   static evaluateActivityStart(state: AppState, taskId: string): GovernanceEvaluationResult {
-    // 1. Trading Gatekeeper Check (G3 Governance)
-    if (taskId === 'task-trading-execution' || taskId === 'task-trading-protocol') {
-      const depCheck = checkTaskDependencies(state, taskId);
-      if (depCheck.isBlocked) {
-        return {
-          allowed: false,
-          governanceLevel: 'G3',
-          error: new TradingGateClosedError(
-            `Trading Gatekeeper Blocked: ${depCheck.blockingReasons.join('; ')}`,
-            { blockingReasons: depCheck.blockingReasons, taskId, rule: 'G3_TRADING_GATE' }
-          ),
-        };
-      }
-
-      // Check trading rules in state
-      if (!state.tradingProtocol?.marketAnalyzed && !state.tradingProtocol?.preMarketAnalysisDone && taskId === 'task-trading-execution') {
-        return {
-          allowed: false,
-          governanceLevel: 'G3',
-          error: new TradingGateClosedError(
-            'Trading Gatekeeper Blocked: Pre-market analysis must be completed before starting live trading execution.',
-            { taskId, rule: 'G3_TRADING_PREP_REQUIRED' }
-          ),
-        };
-      }
+    // 1. Domain policy adapters may deny execution without coupling the kernel to a domain.
+    for (const result of domainExecutionPolicies.evaluateStart(state, taskId)) {
+      if (!result.blocked) continue;
+      return {
+        allowed: false,
+        governanceLevel: 'DOMAIN',
+        error: result.errorCode === 'TRADING_GATE_CLOSED'
+          ? new TradingGateClosedError(result.reasons.join('; '), { taskId, rule: result.rule })
+          : new GovernanceDeniedError(result.reasons.join('; '), { taskId, rule: result.rule }),
+      };
     }
+
 
     const task = state.tasks.find(t => t.id === taskId);
     const def = state.activities.find(a => a.id === taskId);
