@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { getAutonomousNextDecision } from '../services/decisionEngine';
 import { evaluateRoutineState } from '../services/routineEngine';
-import { calculateDynamicAllocations, PROTECTED_FAMILY_START, PROTECTED_FAMILY_END } from '../services/allocationEngine';
+import { calculateDynamicAllocations } from '../services/allocationEngine';
+import { PROTECTED_FAMILY_START, PROTECTED_FAMILY_END } from './fixtures/legacyStandaloneScheduleConstants';
 import { DEFAULT_APP_STATE } from '../data/defaultData';
 import { AppState } from '../types';
 
