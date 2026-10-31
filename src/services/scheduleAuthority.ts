@@ -170,6 +170,50 @@ export function requestSingleActivityScheduleChange(
   const task = state.tasks.find(t => t.id === taskId);
   if (!task) return { state, applied: false, reason: `Activity ${taskId} not found.` };
 
+  const protectedConflict = getAuthoritativeProtectedCommitments(state).find(commitment =>
+    commitment.sourceRef !== taskId &&
+    !task.isProtected &&
+    overlaps(startMinutes, endMinutes, commitment.startMinutes, commitment.endMinutes)
+  );
+  if (protectedConflict) {
+    if (isHosScheduleAuthoritative(state)) {
+      const proposedAllocation: DynamicAllocation = {
+        activityId: task.id,
+        instanceId: `inst-${task.id}`,
+        title: task.title,
+        originalStartMinutes: task.startMinutes,
+        originalEndMinutes: task.endMinutes,
+        allocatedStartMinutes: startMinutes,
+        allocatedEndMinutes: endMinutes,
+        durationMinutes: endMinutes - startMinutes,
+        isCompressed: (endMinutes - startMinutes) < (task.endMinutes - task.startMinutes),
+        isFallback: (task.fallbackLevel || 0) > 0,
+        fallbackLevel: task.fallbackLevel || 0,
+        isProtected: Boolean(task.isProtected),
+        priority: task.isNonNegotiable ? 5 : 3,
+        reasonForAdjustment: reason,
+        dependencyStatus: 'SATISFIED',
+      };
+      const proposal = createProposal(
+        state,
+        [proposedAllocation],
+        `${reason} Conflicts with protected commitment "${protectedConflict.title}".`,
+        'PROPOSED'
+      );
+      return {
+        state: { ...state, scheduleProposals: [proposal, ...(state.scheduleProposals || [])] },
+        applied: false,
+        proposal,
+        reason: `HOS authority retained: proposed change conflicts with protected commitment "${protectedConflict.title}".`,
+      };
+    }
+    return {
+      state,
+      applied: false,
+      reason: `Protected commitment cannot be displaced: "${protectedConflict.title}".`,
+    };
+  }
+
   const allocation: DynamicAllocation = {
     activityId: task.id,
     instanceId: `inst-${task.id}`,
