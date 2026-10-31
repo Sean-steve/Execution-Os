@@ -62,6 +62,7 @@ import { SecurityEngine } from '../security';
 import { requirePermission } from '../auth';
 import { ConflictResolutionRecord, DeviceProfile, SyncQueueItem, LongitudinalWindow } from '../../types';
 import { scanLongitudinalAdaptations, generateLongitudinalExecutionHistory } from '../../services/adaptationEngine';
+import { buildDailyPerformanceRecord, buildWeeklyPerformanceRecord, buildDayOfWeekPerformanceProfiles } from '../../services/weeklyPerformanceIntelligence';
 import {
   ValidationError,
   ResourceNotFoundError,
@@ -1507,6 +1508,59 @@ export function createHeeRouter(repository: IExecutionRepository = defaultExecut
       res.status(200).json({
         success: true,
         devices,
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // =========================================================================
+  // EOS-WPI-001 WEEKLY PERFORMANCE INTELLIGENCE QUERIES
+  // =========================================================================
+
+  router.get('/performance/daily/:date', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const state = await repository.loadState();
+      const date = req.params.date;
+      const persisted = (state.dailyPerformanceRecords || []).find(r => r.localDate === date);
+      res.status(200).json({ success: true, data: persisted || buildDailyPerformanceRecord(state, date), persisted: Boolean(persisted) });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get('/performance/weekly/:weekId', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const state = await repository.loadState();
+      const persisted = (state.weeklyPerformanceRecords || []).find(w => w.weekId === req.params.weekId);
+      const anchor = persisted?.startDate || state.activeDate || new Date().toISOString().slice(0, 10);
+      res.status(200).json({ success: true, data: persisted || buildWeeklyPerformanceRecord(state, anchor), persisted: Boolean(persisted) });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get('/performance/day-of-week', async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const state = await repository.loadState();
+      const profiles = (state.dayOfWeekPerformanceProfiles || []).length
+        ? state.dayOfWeekPerformanceProfiles
+        : buildDayOfWeekPerformanceProfiles(state);
+      res.status(200).json({ success: true, data: profiles });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get('/performance/insights', async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const state = await repository.loadState();
+      res.status(200).json({
+        success: true,
+        data: {
+          insights: state.weeklyInsights || [],
+          recommendations: state.weeklyAdaptationRecommendations || [],
+        },
       });
     } catch (err) {
       next(err);
