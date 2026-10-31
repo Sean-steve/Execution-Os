@@ -180,7 +180,7 @@ export function buildDailyPerformanceRecord(
     : 100;
 
   const deviations = (state.deviations || []).filter(d => dateOnly((d as any).timestamp || (d as any).detectedAt || localDate) === localDate);
-  const resolved = deviations.filter(d => (d as any).resolved || (d as any).resolution || (d as any).status === 'RESOLVED');
+  const resolved = deviations.filter(d => d.isResolved || d.resolvedAutonomously);
   const recovery = deviations.length ? (resolved.length / deviations.length) * 100 : 100;
 
   const tradingApplicable = state.tradingProtocol?.isTradingDay === true;
