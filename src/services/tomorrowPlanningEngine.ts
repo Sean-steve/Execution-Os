@@ -245,6 +245,68 @@ export const activateTomorrowIntent = (
     ...(intentOverride || {}),
   };
 
+  // At the HumanKernelOS boundary, Execution OS does not create a whole-person
+  // daily routine. HOS supplies the Daily Operating Plan; Execution OS only
+  // activates and allocates the activities already delegated to it.
+  if (state.scheduleAuthority?.mode === 'HOS_DELEGATED') {
+    const nextState: AppState = {
+      ...state,
+      tomorrowPlan: {
+        ...plan,
+        lastPlannedAt: currentClock.toISOString(),
+      },
+      routineChangeReason: `Activated under HOS Daily Operating Plan ${state.scheduleAuthority.planId || 'unidentified'}.`,
+    };
+
+    const allocation = calculateDynamicAllocations(nextState);
+    nextState.dynamicAllocations = allocation.allocations;
+    nextState.tasks = allocation.recalculatedTasks;
+    if (allocation.scheduleProposal) {
+      nextState.pendingScheduleProposals = [
+        ...(nextState.pendingScheduleProposals || []).filter(p => p.status === 'PROPOSED'),
+        allocation.scheduleProposal,
+      ];
+    }
+
+    const nextAction = getAutonomousNextAction(nextState);
+    const event = createSystemEvent(
+      'DayActivated',
+      state.scheduleAuthority.planId || 'hos-daily-operating-plan',
+      {
+        authority: 'HOS',
+        planId: state.scheduleAuthority.planId,
+        planRevision: state.scheduleAuthority.planRevision,
+        delegatedActivitiesCount: nextState.tasks.length,
+        proposedScheduleChanges: allocation.proposedChangesCount || 0,
+      },
+      nextState,
+      'SYSTEM_KERNEL',
+      undefined,
+      currentClock
+    );
+    nextState.events = [event, ...(nextState.events || [])].slice(0, 300);
+
+    return {
+      state: nextState,
+      result: {
+        success: true,
+        activatedMode: nextState.currentMode,
+        activatedDayType: nextState.dayType,
+        activatedRoutineState: nextState.routineState,
+        instantiatedTasksCount: 0,
+        nextAction: {
+          phaseTitle: nextAction.phaseTitle,
+          phaseDesc: nextAction.phaseDesc,
+          currentTaskTitle: nextAction.currentTask?.title,
+          timeRemainingStr: nextAction.timeRemainingStr,
+        },
+        allocations: nextState.dynamicAllocations,
+        message: 'HOS Daily Operating Plan retained as final schedule authority; delegated execution activated.',
+      },
+      events: [event],
+    };
+  }
+
   // 1. Evaluate feasibility of intent
   const feasibility = evaluateTomorrowFeasibility(plan, state);
 
