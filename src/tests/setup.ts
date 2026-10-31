@@ -18,3 +18,14 @@ Object.assign(DEFAULT_APP_STATE as any, fixture);
   return legacyProtected ? { ...task, isProtected: true } : task;
 });
 // Test-only: legacy family/presence semantics are represented as explicit protected commitments.
+
+(DEFAULT_APP_STATE as any).externalExecutionGates = [{
+  id: 'legacy-trading-execution-gate',
+  sourceEngine: 'LEGACY_TRADING_COMPATIBILITY_ADAPTER',
+  targetActivityId: 'task-trading-execution',
+  capability: 'external.execution.authorize',
+  status: 'BLOCKED',
+  reason: 'Market Analysis must be finalized and logged before external execution is permitted.',
+  evaluatedAtUtc: new Date().toISOString(),
+  version: 1,
+}];
