@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
-import { AuthenticationError, AuthorizationError, SecurityIntegrityError } from './errors';
+import { AuthenticationError, AuthorizationError } from './errors';
 import { SecurityEngine, TokenClaims } from './security';
+import { HOSIdentityBridge, HOSSubjectContext } from '../hos/identityBridge';
 
 export interface UserContext {
   userId: string;
@@ -8,12 +9,15 @@ export interface UserContext {
   role: 'OWNER' | 'ADMIN' | 'READONLY';
   permissions: string[];
   tokenClaims?: TokenClaims;
+  identitySource?: 'HOS' | 'LEGACY_STANDALONE' | 'PUBLIC';
+  consentScopes?: string[];
 }
 
 declare global {
   namespace Express {
     interface Request {
       user?: UserContext;
+      hosSubject?: HOSSubjectContext;
       idempotencyKey?: string;
       expectedVersion?: number;
       requestId?: string;
@@ -21,35 +25,69 @@ declare global {
   }
 }
 
-/**
- * Public routes that do not require authentication tokens
- */
-const PUBLIC_PATHS = [
-  '/api/health',
-  '/health',
-  '/api/v1/hee/auth/token',
-];
+export type ExecutionIdentityMode = 'HOS' | 'LEGACY_STANDALONE';
+
+export function getExecutionIdentityMode(): ExecutionIdentityMode {
+  return process.env.EXECUTION_OS_IDENTITY_MODE === 'LEGACY_STANDALONE'
+    ? 'LEGACY_STANDALONE'
+    : 'HOS';
+}
+
+function isPublicPath(path: string, mode: ExecutionIdentityMode): boolean {
+  const publicPaths = ['/api/health', '/health', '/api/v1/hos/manifest', '/api/v1/hos/health'];
+  if (publicPaths.some(p => path === p || path.endsWith(p))) return true;
+  return mode === 'LEGACY_STANDALONE' && path.endsWith('/api/v1/hee/auth/token');
+}
+
+function mapHOSPermissionsToLegacy(permissions: string[]): string[] {
+  const mapped = new Set(permissions);
+  if (permissions.some(p => p.endsWith('.read') || p.includes('.read.'))) mapped.add('read:execution');
+  if (permissions.some(p => p.endsWith('.write') || p.includes('.write.'))) mapped.add('write:execution');
+  if (permissions.includes('execution.governance.write')) mapped.add('manage:governance');
+  if (permissions.includes('execution.override.emergency')) mapped.add('override:emergency');
+  return [...mapped];
+}
 
 export function authMiddleware(req: Request, _res: Response, next: NextFunction): void {
-  const isProduction = process.env.NODE_ENV === 'production';
+  const mode = getExecutionIdentityMode();
   const path = req.path;
 
-  // Allow public endpoints
-  if (PUBLIC_PATHS.some(p => path === p || path.endsWith(p))) {
+  if (isPublicPath(path, mode)) {
     req.user = {
-      userId: 'anonymous',
-      tenantId: 'tenant-default',
+      userId: 'public',
+      tenantId: 'public',
       role: 'READONLY',
       permissions: ['read:public'],
+      identitySource: 'PUBLIC',
+      consentScopes: [],
     };
     return next();
   }
 
+  if (mode === 'HOS') {
+    try {
+      const subject = HOSIdentityBridge.fromRequest(req);
+      req.hosSubject = subject;
+      req.user = {
+        userId: subject.subjectId,
+        tenantId: subject.tenantId,
+        role: 'OWNER',
+        permissions: mapHOSPermissionsToLegacy(subject.permissions),
+        identitySource: 'HOS',
+        consentScopes: subject.consentScopes,
+      };
+      return next();
+    } catch (err) {
+      return next(err);
+    }
+  }
+
+  // Explicit legacy compatibility mode only. This path is never the default runtime identity authority.
+  const isProduction = process.env.NODE_ENV === 'production';
   const authHeader = req.headers.authorization;
   const customUserId = req.headers['x-user-id'] as string | undefined;
-  const customTenantId = (req.headers['x-tenant-id'] as string | undefined) || 'tenant-default';
+  const customTenantId = (req.headers['x-tenant-id'] as string | undefined) || 'tenant-standalone';
 
-  // 1. Bearer Token Authentication
   if (authHeader) {
     if (!authHeader.startsWith('Bearer ')) {
       return next(new AuthenticationError('Invalid Authorization header format. Expected "Bearer <token>".'));
@@ -61,25 +99,15 @@ export function authMiddleware(req: Request, _res: Response, next: NextFunction)
 
     try {
       const claims = SecurityEngine.verifySessionToken(token);
-      
-      // Prevent cross-tenant data access if client specifies mismatched tenant
-      if (customTenantId && customTenantId !== 'tenant-default' && claims.tenantId !== customTenantId) {
-        return next(
-          new AuthorizationError(`Cross-tenant security violation: Token belongs to tenant "${claims.tenantId}", not "${customTenantId}".`, {
-            tokenTenant: claims.tenantId,
-            requestedTenant: customTenantId,
-          })
-        );
+      if (customTenantId && customTenantId !== 'tenant-standalone' && claims.tenantId !== customTenantId) {
+        return next(new AuthorizationError(
+          `Cross-tenant security violation: Token belongs to tenant "${claims.tenantId}", not "${customTenantId}".`
+        ));
       }
-
-      // Prevent cross-user data access if x-user-id header does not match authenticated subject
       if (customUserId && customUserId !== claims.sub) {
-        return next(
-          new AuthorizationError(`Cross-user access denied: Authenticated identity "${claims.sub}" cannot act on behalf of "${customUserId}".`, {
-            authenticatedUserId: claims.sub,
-            requestedUserId: customUserId,
-          })
-        );
+        return next(new AuthorizationError(
+          `Cross-user access denied: Authenticated identity "${claims.sub}" cannot act on behalf of "${customUserId}".`
+        ));
       }
 
       req.user = {
@@ -88,6 +116,8 @@ export function authMiddleware(req: Request, _res: Response, next: NextFunction)
         role: claims.role,
         permissions: claims.permissions,
         tokenClaims: claims,
+        identitySource: 'LEGACY_STANDALONE',
+        consentScopes: [],
       };
       return next();
     } catch (err: any) {
@@ -95,64 +125,48 @@ export function authMiddleware(req: Request, _res: Response, next: NextFunction)
     }
   }
 
-  // 2. Production Fail Closed: If production and no Authorization header, strictly reject
   if (isProduction) {
-    return next(
-      new AuthenticationError('Authentication required: Missing Authorization header in production mode. Access denied.')
-    );
+    return next(new AuthenticationError('Authentication required: Missing Authorization header in production standalone mode.'));
   }
 
-  // 3. Development / Test Fallback Context (NODE_ENV !== 'production')
-  const userId = customUserId || 'user-default-1';
+  const userId = customUserId || 'standalone-test-subject';
   const role = (req.headers['x-user-role'] as any) || 'OWNER';
-
   req.user = {
     userId,
     tenantId: customTenantId,
     role,
-    permissions: role === 'READONLY' ? ['read:execution'] : ['read:execution', 'write:execution', 'manage:governance', 'override:emergency'],
+    permissions: role === 'READONLY'
+      ? ['read:execution']
+      : ['read:execution', 'write:execution', 'manage:governance', 'override:emergency'],
+    identitySource: 'LEGACY_STANDALONE',
+    consentScopes: [],
   };
-
   next();
 }
 
-/**
- * Middleware ensuring current user possesses a specific permission
- */
 export function requirePermission(permission: string) {
   return (req: Request, _res: Response, next: NextFunction) => {
-    if (!req.user) {
-      return next(new AuthenticationError('Authentication required to verify permissions'));
-    }
+    if (!req.user) return next(new AuthenticationError('Authentication required to verify permissions'));
     if (!req.user.permissions.includes(permission)) {
-      return next(new AuthorizationError(`User "${req.user.userId}" lacks required permission: "${permission}"`, {
-        requiredPermission: permission,
-        userRole: req.user.role,
-        userPermissions: req.user.permissions,
-      }));
+      return next(new AuthorizationError(
+        `User "${req.user.userId}" lacks required permission: "${permission}"`,
+        { requiredPermission: permission, userRole: req.user.role, userPermissions: req.user.permissions }
+      ));
     }
     next();
   };
 }
 
-/**
- * Middleware enforcing that the resource or target user matches the authenticated caller (Ownership Validation)
- */
 export function requireOwnership(getOwnerId: (req: Request) => string | undefined) {
   return (req: Request, _res: Response, next: NextFunction) => {
-    if (!req.user) {
-      return next(new AuthenticationError('Authentication required'));
-    }
+    if (!req.user) return next(new AuthenticationError('Authentication required'));
     const targetOwnerId = getOwnerId(req);
     if (!targetOwnerId) return next();
-
     if (req.user.role !== 'ADMIN' && req.user.userId !== targetOwnerId) {
-      return next(
-        new AuthorizationError(`Access Denied: Caller "${req.user.userId}" does not own resource owned by "${targetOwnerId}"`, {
-          callerUserId: req.user.userId,
-          resourceOwnerId: targetOwnerId,
-        })
-      );
+      return next(new AuthorizationError(
+        `Access Denied: Caller "${req.user.userId}" does not own resource owned by "${targetOwnerId}"`,
+        { callerUserId: req.user.userId, resourceOwnerId: targetOwnerId }
+      ));
     }
     next();
   };
