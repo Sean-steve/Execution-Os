@@ -427,6 +427,10 @@ export type EventType =
   | 'ScheduleProposalRejected'
   | 'HOSOperatingPlanReceived'
   | 'ExternalExecutionGateUpdated'
+  | 'HOSHumanStateContextUpdated'
+  | 'PDIERecommendationReceived'
+  | 'PDIERecommendationProjected'
+  | 'ExecutionBehavioralSignalCreated'
   | 'DependencySatisfied'
   | 'DependencyBroken'
   | 'DependencyChecked'
@@ -1499,10 +1503,77 @@ export interface HOSIdentityBinding {
   lastAuthenticatedAtUtc: string;
 }
 
+export interface HOSHumanStateExecutionContext {
+  contextId: string;
+  subjectId: string;
+  source: 'HumanKernelOS';
+  sourceRef: string;
+  schemaVersion: string;
+  observedAtUtc: string;
+  validUntilUtc?: string;
+  confidence: number;
+  energyCapacity?: number;
+  cognitiveCapacity?: number;
+  physicalCapacity?: number;
+  recoveryNeed?: number;
+  stressLoad?: number;
+  attentionStability?: number;
+  availability?: 'AVAILABLE' | 'LIMITED' | 'UNAVAILABLE';
+  locationContext?: string;
+  executionConstraints?: string[];
+}
+
+export type PDIEExecutionRecommendationType =
+  | 'PREFER_SHORTER_BLOCKS'
+  | 'PREFER_RECOVERY'
+  | 'REDUCE_CONTEXT_SWITCHING'
+  | 'PREFER_LOWER_COGNITIVE_LOAD'
+  | 'PREFER_LOWER_PHYSICAL_LOAD';
+
+export interface PDIEExecutionRecommendation {
+  id: string;
+  subjectId: string;
+  source: 'PDIE';
+  recommendationVersion: string;
+  type: PDIEExecutionRecommendationType;
+  confidence: number;
+  rationale: string;
+  evidenceRefs: string[];
+  issuedAtUtc: string;
+  expiresAtUtc?: string;
+  parameters?: {
+    maxBlockMinutes?: number;
+    strength?: number;
+  };
+  status: 'RECEIVED' | 'ACTIVE_ADVISORY' | 'REJECTED' | 'EXPIRED';
+}
+
+export interface ExecutionBehavioralSignal {
+  id: string;
+  subjectId?: string;
+  type:
+    | 'EXECUTION_OUTCOME'
+    | 'EXECUTION_DEVIATION'
+    | 'RECOVERY_BEHAVIOR'
+    | 'MANUAL_OVERRIDE'
+    | 'PERFORMANCE_OUTCOME'
+    | 'SCHEDULE_PRESSURE';
+  occurredAtUtc: string;
+  sourceEventId: string;
+  evidence: Record<string, any>;
+  provenance: {
+    source: 'ExecutionOS';
+    schemaVersion: '1.0';
+  };
+}
+
 export interface AppState {
   subjectId?: string;
   tenantId?: string;
   hosIdentityBinding?: HOSIdentityBinding;
+  hosHumanStateContext?: HOSHumanStateExecutionContext;
+  pdieExecutionRecommendations?: PDIEExecutionRecommendation[];
+  executionBehavioralSignals?: ExecutionBehavioralSignal[];
   activeDate?: string; // "YYYY-MM-DD"
   timezone?: string; // "UTC", "America/New_York", etc.
   currentMode: SystemMode;
