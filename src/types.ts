@@ -422,6 +422,8 @@ export type EventType =
   | 'AllocationRecalculated'
   | 'AllocationPlanCommitted'
   | 'ScheduleReallocated'
+  | 'ScheduleChangeProposed'
+  | 'ScheduleAuthorityAccepted'
   | 'DependencySatisfied'
   | 'DependencyBroken'
   | 'DependencyChecked'
@@ -1410,6 +1412,50 @@ export interface DayOfWeekPerformanceProfile {
   updatedAtUtc: string;
 }
 
+
+export type ScheduleAuthorityMode = 'STANDALONE' | 'HOS_DELEGATED';
+
+export interface ScheduleBoundaryWindow {
+  id: string;
+  startMinutes: number;
+  endMinutes: number;
+  type: 'EXECUTION_ALLOWED' | 'PROTECTED' | 'FIXED';
+  label?: string;
+  source?: 'HOS' | 'USER' | 'EXECUTION_OS';
+}
+
+export interface HOSScheduleAuthority {
+  mode: ScheduleAuthorityMode;
+  planId?: string;
+  planRevision?: number;
+  effectiveDate?: string;
+  approvedWindows: ScheduleBoundaryWindow[];
+  protectedWindows: ScheduleBoundaryWindow[];
+  maxAutonomousShiftMinutes: number;
+  allowAutonomousCompression: boolean;
+  receivedAtUtc?: string;
+}
+
+export interface ScheduleChangeProposal {
+  id: string;
+  source: 'EXECUTION_OS';
+  authority: 'HOS';
+  planId?: string;
+  planRevision?: number;
+  createdAtUtc: string;
+  reason: string;
+  status: 'PROPOSED' | 'ACCEPTED' | 'REJECTED' | 'SUPERSEDED';
+  changes: {
+    activityId: string;
+    fromStartMinutes: number;
+    fromEndMinutes: number;
+    proposedStartMinutes: number;
+    proposedEndMinutes: number;
+    compressed: boolean;
+    fallbackLevel?: number;
+  }[];
+}
+
 export interface AppState {
   activeDate?: string; // "YYYY-MM-DD"
   timezone?: string; // "UTC", "America/New_York", etc.
@@ -1426,6 +1472,8 @@ export interface AppState {
   dependencies: ActivityDependency[];
   fallbackPolicies: FallbackPolicy[];
   dynamicAllocations: DynamicAllocation[];
+  scheduleAuthority?: HOSScheduleAuthority;
+  pendingScheduleProposals?: ScheduleChangeProposal[];
   deviations: DeviationRecord[];
   interventions: InterventionRecord[];
   adaptationPatterns: AdaptationPattern[];
