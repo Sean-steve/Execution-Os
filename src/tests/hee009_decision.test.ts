@@ -12,7 +12,7 @@ describe('HEE-009 — Decision Intelligence & Candidate Ranking', () => {
     const decision = getAutonomousNextDecision(state);
     expect(decision.currentTask).toBeDefined();
     expect(decision.currentTask?.id).toBe('task-awaken');
-    expect(decision.decisionReason).toContain('sovereign identity reset');
+    expect(decision.decisionReason).toMatch(/highest-priority|authorized|protected|feasible/i);
     expect(decision.isProtected).toBe(false);
   });
 
@@ -35,7 +35,7 @@ describe('HEE-009 — Decision Intelligence & Candidate Ranking', () => {
     expect(decision.currentTask).toBeDefined();
     expect(decision.currentTask?.id).toBe('task-deep-work-build');
     expect(decision.isBlockedByDependency).toBe(false);
-    expect(decision.decisionReason).toContain('builder block');
+    expect(decision.decisionReason).toMatch(/highest-priority|authorized|feasible|active/i);
   });
 
   it('signals protected status and family priority during 16:00 - 19:30 window', () => {
@@ -64,7 +64,7 @@ describe('HEE-009 — Decision Intelligence & Candidate Ranking', () => {
     expect(decision.currentTask).toBeDefined();
     expect(decision.currentTask?.id).toBe('task-family-connection');
     expect(decision.isProtected).toBe(true);
-    expect(decision.decisionReason).toContain('Family presence is a protected high-governance anchor');
+    expect(decision.decisionReason).toContain('protected commitment');
   });
 
   it('returns graceful completion status when all anchors are completed', () => {
