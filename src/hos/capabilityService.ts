@@ -20,7 +20,19 @@ interface IdempotencyRecord {
   result: HOSCapabilityResult;
 }
 
-const stable = (value: any): string => JSON.stringify(value, Object.keys(value || {}).sort());
+const stable = (value: any): string => {
+  const normalize = (input: any): any => {
+    if (Array.isArray(input)) return input.map(normalize);
+    if (input && typeof input === 'object') {
+      return Object.keys(input).sort().reduce((out, key) => {
+        out[key] = normalize(input[key]);
+        return out;
+      }, {} as Record<string, any>);
+    }
+    return input;
+  };
+  return JSON.stringify(normalize(value));
+};
 
 export class HOSCapabilityService {
   private idempotency = new Map<string, IdempotencyRecord>();
