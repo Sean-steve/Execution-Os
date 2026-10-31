@@ -234,108 +234,91 @@ export const CANONICAL_PERFORMANCE_PROTOCOLS: PerformanceProtocol[] = [
     minimumDurationMinutes: 20
   },
 
-  // 5. TRADING PROTOCOL (GUIDED / INTEGRATED)
+  // 5. EXTERNAL-GATED EXECUTION PROTOCOL
   {
-    id: 'protocol-trading-v1',
+    id: 'protocol-external-gated-v1',
     version: '1.0.0',
-    name: 'Market Execution Gatekeeper Protocol',
-    description: 'Strict sequential trading gate. No setup = disciplined no-trade terminal success.',
-    applicableActivityType: 'TRADING',
+    name: 'External-Gated Execution Protocol',
+    description: 'Generic protocol for activities whose eligibility is governed by another domain engine.',
+    applicableActivityType: 'EXTERNAL_GATED',
     applicableEnvironment: 'GUIDED',
     preparationRituals: [
-      'Review macroeconomic calendar and high-impact news',
-      'Check market regime and volatility index',
-      'Verify emotional neutrality and risk policy limits'
+      'Load the external-domain execution context',
+      'Verify the external gate is open or satisfied',
+      'Confirm the current execution objective'
     ],
     steps: [
       {
-        id: 'gate-1-analysis',
+        id: 'gate-ext-context',
         type: 'CHECKPOINT',
-        title: 'Gate 1: Market & Structure Analysis',
-        description: 'Map higher-timeframe key levels, liquidity pools, and trend bias.',
+        title: 'External Context Ready',
+        description: 'Required context from the owning domain is available.',
         requiresConfirmation: true
       },
       {
-        id: 'gate-2-setup',
-        type: 'BRANCH',
-        title: 'Gate 2: Valid Setup Confirmation',
-        description: 'Does market present a textbook strategy pattern matching rules?',
-        branchOptions: [
-          { id: 'branch-yes', label: 'Valid Setup Present', nextStepId: 'gate-3-confluence' },
-          { id: 'branch-no', label: 'No Valid Setup (NO_TRADE)', isTerminalBranch: true, outcome: 'NO_TRADE' }
-        ]
-      },
-      {
-        id: 'gate-3-confluence',
-        type: 'CHECKPOINT',
-        title: 'Gate 3: Multi-Timeframe Confluence',
-        description: 'Confirm at least 3 distinct confluence factors align with setup.',
+        id: 'gate-ext-eligibility',
+        type: 'EVIDENCE',
+        title: 'External Eligibility',
+        description: 'Capture the generic gate/evidence record supplied by the owning domain.',
         requiresConfirmation: true
       },
       {
-        id: 'gate-4-risk',
-        type: 'CHECKPOINT',
-        title: 'Gate 4: Invalidation Level & R:R Ratio',
-        description: 'Confirm invalidation price level and minimum 1:2.5 risk-to-reward ratio.',
+        id: 'gate-ext-execute',
+        type: 'INSTRUCTION',
+        title: 'Execute Within Authorized Boundary',
+        description: 'Perform only the action authorized by the external domain gate.',
         requiresConfirmation: true
       },
       {
-        id: 'gate-5-position',
-        type: 'CHECKPOINT',
-        title: 'Gate 5: Exact Position Sizing',
-        description: 'Calculate position size strictly capped at 1.0% portfolio risk max.',
-        requiresConfirmation: true
-      },
-      {
-        id: 'gate-6-close',
+        id: 'gate-ext-close',
         type: 'CLOSE',
-        title: 'Gate 6: Order Authorization & Journal',
-        description: 'Authorize order entry with stop-loss in place; journal thesis.',
+        title: 'Close & Return Evidence',
+        description: 'Record the execution outcome without redefining external-domain policy.',
         requiresConfirmation: true
       }
     ],
     evidencePolicy: {
       requiredLevel: 'E2',
-      allowedEvidenceTypes: ['TRADE_GATE_RECORD', 'CHECKLIST_CONFIRM']
+      allowedEvidenceTypes: ['EXTERNAL_GATE_RECORD', 'CHECKLIST_CONFIRM', 'INTEGRATION_EVIDENCE']
     },
     completionPolicy: 'PROTOCOL',
     targetDurationMinutes: 45,
-    minimumDurationMinutes: 15
+    minimumDurationMinutes: 5
   },
 
-  // 6. PROTECTED FAMILY TIME (EXTERNAL)
+  // 6. PROTECTED PRESENCE / LOW-SCREEN PROTOCOL
   {
-    id: 'protocol-family-v1',
+    id: 'protocol-presence-v1',
     version: '1.0.0',
-    name: 'Protected Family Presence Protocol',
-    description: 'Low-screen protected environment. OS suppresses noise so human can be fully present.',
-    applicableActivityType: 'FAMILY',
+    name: 'Protected Presence Protocol',
+    description: 'Generic low-screen environment for any HOS-protected human-life commitment.',
+    applicableActivityType: 'PRESENCE',
     applicableEnvironment: 'EXTERNAL',
     preparationRituals: [
-      'Conclude active work tasks and save mental states',
-      'Silence work notifications and close work applications',
-      'Transition fully into present, attentive connection'
+      'Conclude the active execution session',
+      'Suppress low-priority execution noise',
+      'Enter the protected commitment fully'
     ],
     steps: [
       {
-        id: 'step-fam-enter',
+        id: 'step-presence-enter',
         type: 'PREPARE',
-        title: 'Enter Family Presence',
-        description: 'Work is locked out. Schedule is protected until end of window.',
+        title: 'Enter Protected Presence',
+        description: 'Execution OS acknowledges the protected commitment and yields attention.',
         requiresConfirmation: true
       },
       {
-        id: 'step-fam-live',
+        id: 'step-presence-live',
         type: 'INSTRUCTION',
         title: 'Screen-Away Presence',
-        description: 'Live your life. Execution OS is silent and protecting this time.',
+        description: 'Execution OS stays quiet while the human is present in the protected commitment.',
         requiresConfirmation: false
       },
       {
-        id: 'step-fam-return',
+        id: 'step-presence-return',
         type: 'CLOSE',
-        title: 'Return from Family Time',
-        description: 'Acknowledge return to daily flow without productivity pressure.',
+        title: 'Return to Execution',
+        description: 'Acknowledge return and resume from the authoritative operating plan.',
         requiresConfirmation: true
       }
     ],
@@ -344,8 +327,8 @@ export const CANONICAL_PERFORMANCE_PROTOCOLS: PerformanceProtocol[] = [
       allowedEvidenceTypes: ['SCREEN_AWAY_RETURN', 'CHECKLIST_CONFIRM']
     },
     completionPolicy: 'BINARY_CONFIRMATION',
-    targetDurationMinutes: 120,
-    minimumDurationMinutes: 30
+    targetDurationMinutes: 60,
+    minimumDurationMinutes: 0
   }
 ];
 
