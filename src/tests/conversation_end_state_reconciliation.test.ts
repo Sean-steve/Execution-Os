@@ -10,6 +10,8 @@ import {
 import { EntityMapper } from '../canonical/entityMapper';
 import { InMemoryExecutionRepository } from '../services/repository';
 import { ExecutionApplicationService } from '../services/executionApplicationService';
+import { PerformanceAiPartner } from '../services/performanceAiPartner';
+import { PerformanceIntegrationHub } from '../services/performanceIntegrationHub';
 import { RecordTradingProtocolCommand } from '../commands';
 
 function mutableClock(startIso = '2026-10-31T09:00:00.000Z') {
@@ -149,6 +151,68 @@ describe('Conversation end-state reconciliation acceptance', () => {
     const tuesday = profiles.find(p => p.weekdayLabel === 'Tuesday');
     expect(tuesday?.sampleCount).toBe(10);
     expect(tuesday?.confidence).toBe('STRONG');
+  });
+
+  it('AI Execution Partner stays session-scoped and cannot silently mutate the execution state', async () => {
+    const state = structuredClone(DEFAULT_APP_STATE);
+    const task = state.tasks.find(t => t.interactiveActionType === 'FOCUS_BLOCK') || state.tasks[0];
+    const engine = new HumanPerformanceEngine(mutableClock());
+    const session = engine.createSession(state, task.id);
+    const stateBefore = JSON.stringify(state);
+
+    const partner = new PerformanceAiPartner({
+      generate: async () => 'Execute the smallest concrete next step and capture the result.',
+    });
+    const result = await partner.respond({
+      session,
+      state,
+      message: 'Help me finish this objective.',
+      mode: 'COACH',
+    });
+
+    expect(result.scopedContext.sessionId).toBe(session.id);
+    expect(result.scopedContext.activityId).toBe(task.id);
+    expect(result.requiresApproval).toBe(false);
+    expect(JSON.stringify(state)).toBe(stateBefore);
+  });
+
+  it('AI Execution Partner marks extension requests as requiring governed approval', async () => {
+    const state = structuredClone(DEFAULT_APP_STATE);
+    const task = state.tasks.find(t => t.interactiveActionType === 'FOCUS_BLOCK') || state.tasks[0];
+    const session = new HumanPerformanceEngine(mutableClock()).createSession(state, task.id);
+    const partner = new PerformanceAiPartner({
+      generate: async () => 'Request the extension through HEE.',
+    });
+
+    const result = await partner.respond({
+      session,
+      state,
+      message: 'I need 20 more minutes.',
+      mode: 'COACH',
+    });
+
+    expect(result.requiresApproval).toBe(true);
+    expect(result.proposedAction?.type).toBe('REQUEST_EXTENSION');
+  });
+
+  it('integration evidence hub validates Git evidence and rejects malformed references', () => {
+    const state = structuredClone(DEFAULT_APP_STATE);
+    const task = state.tasks.find(t => t.interactiveActionType === 'FOCUS_BLOCK') || state.tasks[0];
+    const session = new HumanPerformanceEngine(mutableClock()).createSession(state, task.id);
+    const hub = new PerformanceIntegrationHub();
+
+    const valid = hub.collectEvidence(session, state, {
+      adapterId: 'git-commit',
+      payload: { repository: 'Sean-steve/Execution-Os', sha: 'abcdef1234567' },
+    });
+    const invalid = hub.collectEvidence(session, state, {
+      adapterId: 'git-commit',
+      payload: { repository: 'Execution-Os', sha: 'x' },
+    });
+
+    expect(valid.valid).toBe(true);
+    expect(valid.trustLevel).toBe('E2');
+    expect(invalid.valid).toBe(false);
   });
 
   it('canonical mapper preserves HEE-011 and WPI records across a persistence round-trip', () => {
