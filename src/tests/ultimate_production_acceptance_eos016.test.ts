@@ -17,8 +17,7 @@ import {
   scanLongitudinalAdaptations,
   applyAdaptationProposal,
   rollbackAdaptationProposal,
-  generateLongitudinalExecutionHistory
-} from '../services/adaptationEngine';
+  } from '../services/adaptationEngine';
 import { defaultObservability } from '../services/observabilityService';
 import { defaultTracing } from '../services/tracingService';
 import { defaultMetrics } from '../services/metricsService';
@@ -28,6 +27,7 @@ import { defaultBackgroundWorker } from '../services/backgroundWorker';
 import { defaultCrossDeviceSyncEngine } from '../services/crossDeviceSyncEngine';
 import { MemoryDurableEventStore } from '../services/durableEventStore';
 import { IdempotentEventDispatcher, IEventConsumer } from '../services/eventDispatcher';
+import { generateLongitudinalExecutionHistory } from './fixtures/syntheticLongitudinalHistory';
 import { ScenarioBuilder, verifyEventCorrelationChain } from './fixtures/scenarioBuilder';
 import { InMemoryExecutionRepository } from '../services/repository';
 import { ExecutionApplicationService } from '../services/executionApplicationService';
