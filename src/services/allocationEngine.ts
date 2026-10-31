@@ -229,47 +229,33 @@ export function evaluatePerformanceExtensionAllocation(
     return { approved: false, reason: `Activity ${activityId} not found.`, state };
   }
 
-  const effectiveStart = task.allocatedStartMinutes ?? task.startMinutes;
   const effectiveEnd = task.allocatedEndMinutes ?? task.endMinutes;
   const proposedEnd = effectiveEnd + requestedMinutes;
+  const protectedConflict = getProtectedScheduleWindows(state).find(window =>
+    window.id !== activityId &&
+    window.id !== `task-window-${activityId}` &&
+    effectiveEnd < window.endMinutes &&
+    proposedEnd > window.startMinutes
+  );
 
-  const conflictingProtected = state.tasks
-    .filter(t =>
-      t.id !== activityId &&
-      !t.completed &&
-      (t.isProtected || isFamilyTask(t) || t.isNonNegotiable) &&
-      (t.allocatedStartMinutes ?? t.startMinutes) >= effectiveEnd &&
-      (t.allocatedStartMinutes ?? t.startMinutes) < proposedEnd
-    )
-    .sort((a, b) => (a.allocatedStartMinutes ?? a.startMinutes) - (b.allocatedStartMinutes ?? b.startMinutes))[0];
-
-  if (conflictingProtected) {
-    const start = conflictingProtected.allocatedStartMinutes ?? conflictingProtected.startMinutes;
+  if (protectedConflict) {
     return {
       approved: false,
-      reason: `Extension denied: +${requestedMinutes}m would invade protected "${conflictingProtected.title}" at ${start} minutes.`,
+      reason: `Extension denied: +${requestedMinutes}m would invade protected "${protectedConflict.label || protectedConflict.id}".`,
       state,
     };
   }
 
-  const updatedTasks = state.tasks.map(t => {
-    if (t.id === activityId) {
-      return {
-        ...t,
-        allocatedEndMinutes: proposedEnd,
-      };
-    }
-
+  const proposedTasks = state.tasks.map(t => {
     const start = t.allocatedStartMinutes ?? t.startMinutes;
     const end = t.allocatedEndMinutes ?? t.endMinutes;
-    if (
-      !t.completed &&
-      !t.isProtected &&
-      !isFamilyTask(t) &&
-      !t.isNonNegotiable &&
-      start >= effectiveEnd &&
-      start < proposedEnd
-    ) {
+
+    if (t.id === activityId) {
+      return { ...t, allocatedEndMinutes: proposedEnd };
+    }
+
+    const protectedTask = isProtectedExecutionTask(state, t);
+    if (!t.completed && !protectedTask && !t.isNonNegotiable && start >= effectiveEnd && start < proposedEnd) {
       return {
         ...t,
         allocatedStartMinutes: start + requestedMinutes,
@@ -279,28 +265,69 @@ export function evaluatePerformanceExtensionAllocation(
     return t;
   });
 
-  const nextState = { ...state, tasks: updatedTasks };
-  const allocations = state.dynamicAllocations.map(allocation => {
-    const updatedTask = updatedTasks.find(t => t.id === allocation.activityId);
-    if (!updatedTask) return allocation;
+  const proposedAllocations: DynamicAllocation[] = state.dynamicAllocations.length
+    ? state.dynamicAllocations.map(allocation => {
+        const proposedTask = proposedTasks.find(t => t.id === allocation.activityId);
+        if (!proposedTask) return allocation;
+        const start = proposedTask.allocatedStartMinutes ?? proposedTask.startMinutes;
+        const end = proposedTask.allocatedEndMinutes ?? proposedTask.endMinutes;
+        return {
+          ...allocation,
+          allocatedStartMinutes: start,
+          allocatedEndMinutes: end,
+          durationMinutes: end - start,
+          reasonForAdjustment: proposedTask.id === activityId
+            ? `HEE-011 requested +${requestedMinutes}m; HEE-003 evaluated schedule impact.`
+            : allocation.reasonForAdjustment,
+        };
+      })
+    : proposedTasks.map(t => ({
+        activityId: t.id,
+        instanceId: `inst-${t.id}`,
+        title: t.title,
+        originalStartMinutes: t.startMinutes,
+        originalEndMinutes: t.endMinutes,
+        allocatedStartMinutes: t.allocatedStartMinutes ?? t.startMinutes,
+        allocatedEndMinutes: t.allocatedEndMinutes ?? t.endMinutes,
+        durationMinutes: (t.allocatedEndMinutes ?? t.endMinutes) - (t.allocatedStartMinutes ?? t.startMinutes),
+        isCompressed: false,
+        isFallback: false,
+        fallbackLevel: t.fallbackLevel || 0,
+        isProtected: isProtectedExecutionTask(state, t),
+        priority: t.isNonNegotiable ? 5 : 3,
+        reasonForAdjustment: t.id === activityId ? `HEE-011 requested +${requestedMinutes}m.` : 'Current authoritative allocation.',
+        dependencyStatus: 'SATISFIED',
+      }));
+
+  const authority = reconcileWithScheduleAuthority(
+    state,
+    proposedAllocations,
+    proposedTasks,
+    `HEE-011 requested +${requestedMinutes}m for ${activityId}.`
+  );
+
+  if (authority.proposal) {
     return {
-      ...allocation,
-      allocatedStartMinutes: updatedTask.allocatedStartMinutes ?? allocation.allocatedStartMinutes,
-      allocatedEndMinutes: updatedTask.allocatedEndMinutes ?? allocation.allocatedEndMinutes,
-      durationMinutes:
-        (updatedTask.allocatedEndMinutes ?? allocation.allocatedEndMinutes) -
-        (updatedTask.allocatedStartMinutes ?? allocation.allocatedStartMinutes),
-      reasonForAdjustment:
-        updatedTask.id === activityId
-          ? `HEE-011 extension approved by HEE-003 (+${requestedMinutes}m).`
-          : allocation.reasonForAdjustment,
+      approved: false,
+      reason: 'Extension requires HOS schedule approval; proposal created and Daily Operating Plan retained.',
+      state: {
+        ...state,
+        pendingScheduleProposals: [
+          ...(state.pendingScheduleProposals || []).filter(p => p.status === 'PROPOSED'),
+          authority.proposal,
+        ],
+      },
     };
-  });
+  }
 
   return {
     approved: true,
-    reason: `${requestedMinutes} minutes approved by HEE-003; no protected commitment is invaded.`,
+    reason: `${requestedMinutes} minutes approved inside current execution authority boundaries.`,
     resultingAllocatedEndMinutes: proposedEnd,
-    state: { ...nextState, dynamicAllocations: allocations },
+    state: {
+      ...state,
+      tasks: authority.tasks,
+      dynamicAllocations: authority.allocations,
+    },
   };
 }
