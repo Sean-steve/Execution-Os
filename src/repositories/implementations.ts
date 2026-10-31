@@ -93,9 +93,11 @@ export class InMemoryStorageAdapter implements IStorageAdapter {
 export class StatePersistenceManager {
   private adapter: IStorageAdapter;
   private cachedState: AppState | null = null;
+  private resetBaseline: AppState;
 
   constructor(adapter: IStorageAdapter = new BrowserLocalStorageAdapter(), initialState?: AppState) {
     this.adapter = adapter;
+    this.resetBaseline = JSON.parse(JSON.stringify(initialState || RUNTIME_INITIAL_STATE));
     if (initialState) {
       this.cachedState = JSON.parse(JSON.stringify(initialState));
       this.adapter.setItem(STORAGE_KEY, JSON.stringify(this.cachedState));
@@ -163,7 +165,7 @@ export class StatePersistenceManager {
   }
 
   reset(): AppState {
-    this.cachedState = JSON.parse(JSON.stringify(RUNTIME_INITIAL_STATE));
+    this.cachedState = JSON.parse(JSON.stringify(this.resetBaseline));
     this.adapter.setItem(STORAGE_KEY, JSON.stringify(this.cachedState));
     return JSON.parse(JSON.stringify(this.cachedState));
   }
