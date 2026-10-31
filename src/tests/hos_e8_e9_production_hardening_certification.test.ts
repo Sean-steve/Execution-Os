@@ -97,6 +97,10 @@ describe('HumanKernelOS E8-E9 — Production Hardening & Integration Certificati
     'HOS_EXECUTION_SHARED_SECRET',
     'HOS_EVENT_MESH_URL',
     'HOS_EVENT_MESH_TIMEOUT_MS',
+    'EXECUTION_OS_DURABLE_STORAGE_ROOT',
+    'EXECUTION_OS_BACKUP_VERIFIED_AT',
+    'EXECUTION_OS_RESTORE_DRILL_VERIFIED_AT',
+    'HEE_DATABASE_PATH',
     'HOS_BOUNDARY_STORE_PATH',
     'EXECUTION_OS_SUBJECT_DATA_DIR',
     'HEE_DLQ_PATH',
@@ -116,6 +120,10 @@ describe('HumanKernelOS E8-E9 — Production Hardening & Integration Certificati
     process.env.HOS_EXECUTION_SHARED_SECRET = 'e9-hos-shared-integration-secret-32-plus-chars';
     process.env.HOS_EVENT_MESH_URL = 'https://human-kernel.invalid/events';
     process.env.HOS_EVENT_MESH_TIMEOUT_MS = '50';
+    process.env.EXECUTION_OS_DURABLE_STORAGE_ROOT = tmpDir;
+    process.env.EXECUTION_OS_BACKUP_VERIFIED_AT = new Date().toISOString();
+    process.env.EXECUTION_OS_RESTORE_DRILL_VERIFIED_AT = new Date().toISOString();
+    process.env.HEE_DATABASE_PATH = path.join(tmpDir, 'canonical.json');
     process.env.HOS_BOUNDARY_STORE_PATH = path.join(tmpDir, 'boundary.json');
     process.env.EXECUTION_OS_SUBJECT_DATA_DIR = path.join(tmpDir, 'subjects');
     process.env.HEE_DLQ_PATH = path.join(tmpDir, 'dlq.json');
@@ -161,6 +169,25 @@ describe('HumanKernelOS E8-E9 — Production Hardening & Integration Certificati
 
     process.env.HOS_EVENT_MESH_URL = 'https://human-kernel.invalid/events';
     expect(validateHOSProductionRuntime().valid).toBe(true);
+  });
+
+  it('E8: fails closed without durable storage declaration or fresh recovery evidence', () => {
+    delete process.env.EXECUTION_OS_DURABLE_STORAGE_ROOT;
+    const noRoot = validateHOSProductionRuntime();
+    expect(noRoot.valid).toBe(false);
+    expect(noRoot.errors.join(' ')).toMatch(/DURABLE_STORAGE_ROOT/);
+
+    process.env.EXECUTION_OS_DURABLE_STORAGE_ROOT = tmpDir;
+    process.env.EXECUTION_OS_BACKUP_VERIFIED_AT = '2025-01-01T00:00:00.000Z';
+    const staleBackup = getHOSReadinessSnapshot();
+    expect(staleBackup.status).toBe('not_ready');
+    expect(staleBackup.checks.backupEvidence).toBe(false);
+
+    process.env.EXECUTION_OS_BACKUP_VERIFIED_AT = new Date().toISOString();
+    process.env.EXECUTION_OS_RESTORE_DRILL_VERIFIED_AT = '2025-01-01T00:00:00.000Z';
+    const staleRestore = getHOSReadinessSnapshot();
+    expect(staleRestore.status).toBe('not_ready');
+    expect(staleRestore.checks.restoreEvidence).toBe(false);
   });
 
   it('E8: exposes separate liveness/readiness and applies hardened API response headers', async () => {
