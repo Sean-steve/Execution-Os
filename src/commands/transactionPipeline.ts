@@ -237,24 +237,20 @@ export class TransactionPipeline {
         const { taskId, executionStatus, missedWindow, penaltyCutPoints, completedAtMinutes } = command.payload;
         const completionTime = completedAtMinutes !== undefined ? completedAtMinutes : currentMinutes;
 
-        // If trading prep completes, mark market analyzed & setup verified
-        if (taskId === 'task-trading-prep' || taskId === 'task-trading-protocol') {
-          state.tradingProtocol.marketAnalyzed = true;
-          state.tradingProtocol.setupDetected = true;
-          state.tradingProtocol.strategyCriteriaMet = true;
-          (state.tradingProtocol as any).preMarketAnalysisDone = true;
-
-          state.tasks = state.tasks.map(t =>
-            (t.id === 'task-trading-protocol' || t.id === 'task-trading-prep')
-              ? {
-                  ...t,
-                  completed: true,
-                  completedAtMinutes: completionTime,
-                  completedAtDate: clock.toISOString(),
-                  executionStatus: executionStatus || 'ON_TIME',
-                }
-              : t
-          );
+        // Trading is structurally gated. Completing the parent task may never fabricate protocol evidence.
+        if (taskId === 'task-trading-prep' || taskId === 'task-trading-protocol' || taskId === 'task-trading-execution') {
+          const p = state.tradingProtocol;
+          const disciplinedNoTrade = p.marketAnalyzed && p.closedTerminal && p.noSetupJustified && !p.executed;
+          const validTrade =
+            p.marketAnalyzed &&
+            p.setupDetected &&
+            p.strategyCriteriaMet &&
+            p.riskLimitsSatisfied &&
+            p.stopLossDefined &&
+            p.closedTerminal;
+          if (!disciplinedNoTrade && !validTrade) {
+            throw new Error('TRADING_GATE_CLOSED: Trading activity cannot complete until the protocol reaches a valid terminal outcome.');
+          }
         }
 
         const task = state.tasks.find(t => t.id === taskId);
