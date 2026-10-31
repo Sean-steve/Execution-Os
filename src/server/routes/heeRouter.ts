@@ -618,7 +618,7 @@ export function createHeeRouter(repository: IExecutionRepository = defaultExecut
           authorityMode: state.scheduleAuthority?.mode || 'STANDALONE',
           planId: state.scheduleAuthority?.planId,
           planRevision: state.scheduleAuthority?.planRevision,
-          commitments: getProtectedScheduleWindows(state),
+          commitments: getProtectedScheduleWindows(state).map(window => ({ ...window, name: window.label || window.id })),
         },
       });
     } catch (err) {
