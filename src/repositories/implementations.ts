@@ -18,7 +18,8 @@ import {
   SystemEvent,
   AutonomyLevel
 } from '../types';
-import { DEFAULT_APP_STATE } from '../data/defaultData';
+import { RUNTIME_INITIAL_STATE } from '../data/runtimeInitialState';
+import { RUNTIME_INITIAL_STATE } from '../data/defaultData';
 import {
   IRoutineRepository,
   IActivityRepository,
@@ -107,44 +108,44 @@ export class StatePersistenceManager {
     }
     const raw = this.adapter.getItem(STORAGE_KEY);
     if (!raw) {
-      this.cachedState = JSON.parse(JSON.stringify(DEFAULT_APP_STATE));
+      this.cachedState = JSON.parse(JSON.stringify(RUNTIME_INITIAL_STATE));
       return JSON.parse(JSON.stringify(this.cachedState));
     }
     try {
       const parsed = JSON.parse(raw);
       this.cachedState = {
-        ...DEFAULT_APP_STATE,
+        ...RUNTIME_INITIAL_STATE,
         ...parsed,
-        tasks: parsed.tasks?.length ? parsed.tasks : DEFAULT_APP_STATE.tasks,
-        activities: parsed.activities?.length ? parsed.activities : DEFAULT_APP_STATE.activities,
-        dependencies: parsed.dependencies?.length ? parsed.dependencies : DEFAULT_APP_STATE.dependencies,
-        fallbackPolicies: parsed.fallbackPolicies?.length ? parsed.fallbackPolicies : DEFAULT_APP_STATE.fallbackPolicies,
-        adaptationPatterns: parsed.adaptationPatterns?.length ? parsed.adaptationPatterns : DEFAULT_APP_STATE.adaptationPatterns,
-        adaptationProposals: parsed.adaptationProposals?.length ? parsed.adaptationProposals : DEFAULT_APP_STATE.adaptationProposals,
-        rewards: parsed.rewards?.length ? parsed.rewards : DEFAULT_APP_STATE.rewards,
+        tasks: parsed.tasks?.length ? parsed.tasks : RUNTIME_INITIAL_STATE.tasks,
+        activities: parsed.activities?.length ? parsed.activities : RUNTIME_INITIAL_STATE.activities,
+        dependencies: parsed.dependencies?.length ? parsed.dependencies : RUNTIME_INITIAL_STATE.dependencies,
+        fallbackPolicies: parsed.fallbackPolicies?.length ? parsed.fallbackPolicies : RUNTIME_INITIAL_STATE.fallbackPolicies,
+        adaptationPatterns: parsed.adaptationPatterns?.length ? parsed.adaptationPatterns : RUNTIME_INITIAL_STATE.adaptationPatterns,
+        adaptationProposals: parsed.adaptationProposals?.length ? parsed.adaptationProposals : RUNTIME_INITIAL_STATE.adaptationProposals,
+        rewards: parsed.rewards?.length ? parsed.rewards : RUNTIME_INITIAL_STATE.rewards,
         pointsAwardedTasks: parsed.pointsAwardedTasks || [],
-        activeTimers: parsed.activeTimers || DEFAULT_APP_STATE.activeTimers,
+        activeTimers: parsed.activeTimers || RUNTIME_INITIAL_STATE.activeTimers,
         events: parsed.events || [],
         deviations: parsed.deviations || [],
         interventions: parsed.interventions || [],
         dynamicAllocations: parsed.dynamicAllocations || [],
         userOverrides: parsed.userOverrides || [],
-        autonomousResolutionCount: parsed.autonomousResolutionCount ?? DEFAULT_APP_STATE.autonomousResolutionCount,
-        autonomyLevel: parsed.autonomyLevel ?? DEFAULT_APP_STATE.autonomyLevel,
+        autonomousResolutionCount: parsed.autonomousResolutionCount ?? RUNTIME_INITIAL_STATE.autonomousResolutionCount,
+        autonomyLevel: parsed.autonomyLevel ?? RUNTIME_INITIAL_STATE.autonomyLevel,
         routineState: parsed.routineState || 'STANDARD',
-        activeDate: parsed.activeDate || DEFAULT_APP_STATE.activeDate || new Date().toISOString().split('T')[0],
-        timezone: parsed.timezone || DEFAULT_APP_STATE.timezone || 'UTC',
-        scheduler: parsed.scheduler || DEFAULT_APP_STATE.scheduler,
-        notifications: parsed.notifications || DEFAULT_APP_STATE.notifications || [],
+        activeDate: parsed.activeDate || RUNTIME_INITIAL_STATE.activeDate || new Date().toISOString().split('T')[0],
+        timezone: parsed.timezone || RUNTIME_INITIAL_STATE.timezone || 'UTC',
+        scheduler: parsed.scheduler || RUNTIME_INITIAL_STATE.scheduler,
+        notifications: parsed.notifications || RUNTIME_INITIAL_STATE.notifications || [],
         version: parsed.version ?? 1,
-        syncMetadata: parsed.syncMetadata || DEFAULT_APP_STATE.syncMetadata,
-        registeredDevices: parsed.registeredDevices || DEFAULT_APP_STATE.registeredDevices,
+        syncMetadata: parsed.syncMetadata || RUNTIME_INITIAL_STATE.syncMetadata,
+        registeredDevices: parsed.registeredDevices || RUNTIME_INITIAL_STATE.registeredDevices,
         conflictLog: parsed.conflictLog || [],
       };
       return JSON.parse(JSON.stringify(this.cachedState));
     } catch (e) {
       console.error('Failed to parse state:', e);
-      this.cachedState = JSON.parse(JSON.stringify(DEFAULT_APP_STATE));
+      this.cachedState = JSON.parse(JSON.stringify(RUNTIME_INITIAL_STATE));
       return JSON.parse(JSON.stringify(this.cachedState));
     }
   }
@@ -162,7 +163,7 @@ export class StatePersistenceManager {
   }
 
   reset(): AppState {
-    this.cachedState = JSON.parse(JSON.stringify(DEFAULT_APP_STATE));
+    this.cachedState = JSON.parse(JSON.stringify(RUNTIME_INITIAL_STATE));
     this.adapter.setItem(STORAGE_KEY, JSON.stringify(this.cachedState));
     return JSON.parse(JSON.stringify(this.cachedState));
   }
