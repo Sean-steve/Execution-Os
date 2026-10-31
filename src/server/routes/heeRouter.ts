@@ -63,7 +63,7 @@ import { SchemaValidator } from '../validation';
 import { SecurityEngine } from '../security';
 import { requirePermission } from '../auth';
 import { ConflictResolutionRecord, DeviceProfile, SyncQueueItem, LongitudinalWindow } from '../../types';
-import { scanLongitudinalAdaptations, generateLongitudinalExecutionHistory } from '../../services/adaptationEngine';
+import { scanLongitudinalAdaptations } from '../../services/adaptationEngine';
 import { buildDailyPerformanceRecord, buildWeeklyPerformanceRecord, buildDayOfWeekPerformanceProfiles } from '../../services/weeklyPerformanceIntelligence';
 import { performanceAiPartner } from '../../services/performanceAiPartner';
 import { performanceIntegrationHub } from '../../services/performanceIntegrationHub';
@@ -859,26 +859,6 @@ export function createHeeRouter(repository: IExecutionRepository = defaultExecut
     await processAuthoritativeCommand(req, res, next, () => new RetainAdaptationProposalCommand({ proposalId }), options);
   });
 
-  /**
-   * POST /api/v1/hee/adaptations/seed-history
-   * Seeds historical execution data across 7, 30, 60, 90 days for testing and verification
-   */
-  router.post('/adaptations/seed-history', async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const days = parseInt(req.body?.days || '90', 10);
-      let state = await repository.loadState();
-      state.historicalDays = generateLongitudinalExecutionHistory(days);
-      await repository.saveState(state);
-
-      res.status(200).json({
-        success: true,
-        message: `Successfully seeded ${days} days of longitudinal execution history`,
-        seededDaysCount: state.historicalDays.length,
-      });
-    } catch (err) {
-      next(err);
-    }
-  });
 
   router.post('/proposals/:id/apply', async (req: Request, res: Response, next: NextFunction) => {
     const proposalId = req.params.id;
