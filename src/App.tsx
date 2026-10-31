@@ -90,19 +90,40 @@ export default function App() {
     setDisciplineTaskToReview(task);
   };
 
-  const handleSelectTaskFromTimeline = (task: RoutineTask) => {
-    // Contextual routing based on task type
-    if (task.anchorId === 'ANCHOR_2_PRIME' || task.id.includes('prime') || task.id.includes('light') || task.id.includes('workout')) {
-      handleNavigateToView('MORNING_PRIME');
-    } else if (task.anchorId === 'ANCHOR_3_COMMAND') {
+  const handleSelectTaskFromTimeline = async (task: RoutineTask) => {
+    const performanceActionTypes = new Set([
+      'FOCUS_BLOCK',
+      'COMPANY_TARGET',
+      'TRADING_GATEKEEPER',
+      'FAMILY_OUTING',
+      'IDENTITY_CHECK',
+      'OUTSIDE_TIMER',
+      'WORKOUT_TRACKER',
+      'MEDITATION_TIMER',
+    ]);
+
+    if (performanceActionTypes.has(task.interactiveActionType || '')) {
+      const existing = (state.performanceSessions || []).find(
+        session =>
+          session.activityInstanceId === task.id &&
+          !['COMPLETED', 'PARTIAL', 'ABANDONED', 'CANCELLED'].includes(session.status)
+      );
+      if (existing) {
+        setState(prev => ({ ...prev, activePerformanceSessionId: existing.id, activeView: 'PERFORMANCE' }));
+        return;
+      }
+
+      const result = await defaultApplicationService.execute({
+        type: 'CreatePerformanceSession',
+        payload: { activityInstanceId: task.id },
+      }, state);
+      if (result.success && result.state) setState(result.state);
+      return;
+    }
+
+    if (task.interactiveActionType === 'COMMAND_CENTER' || task.anchorId === 'ANCHOR_3_COMMAND') {
       handleNavigateToView('COMMAND_CENTER');
-    } else if (task.anchorId === 'ANCHOR_5_DEEPWORK_BUILD' || task.category === 'DEEP_WORK') {
-      handleNavigateToView('DEEP_WORK');
-    } else if (task.id === 'task-trading-prep' || task.category === 'TRADING') {
-      handleNavigateToView('TRADING');
-    } else if (task.anchorId === 'ANCHOR_8_HUMAN_LIFE' || task.category === 'LIFE' || task.id === 'task-family-life') {
-      handleNavigateToView('FAMILY');
-    } else if (task.anchorId === 'ANCHOR_10_REVIEW' || task.category === 'EVENING') {
+    } else if (task.interactiveActionType === 'EVENING_REVIEW' || task.category === 'EVENING') {
       handleNavigateToView('REVIEW');
     } else {
       handleNavigateToView('NOW');
