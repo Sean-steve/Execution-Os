@@ -2,6 +2,7 @@ import { AppState, DynamicAllocation, RoutineTask, SystemMode, DayType } from '.
 import { getCurrentTimeMinutes } from './storageService';
 import { checkTaskDependencies } from './dependencyEngine';
 import { getFallbackPolicyForTask, selectOptimalFallbackTier } from './fallbackEngine';
+import { getWeeklyPerformanceFitModifier } from './weeklyPerformanceIntelligence';
 
 // Protected boundaries (in minutes from midnight)
 export const PROTECTED_FAMILY_START = 960;  // 4:00 PM (16:00)
@@ -39,7 +40,20 @@ export const calculateDynamicAllocations = (state: AppState): AllocationResult =
   const tasks = [...state.tasks];
   
   // Filter tasks allowed in current mode
-  const allowedTasks = tasks.filter(t => (t.modesAllowed || ['GREEN', 'YELLOW', 'RED', 'BLACK']).includes(mode));
+  const allowedTasks = tasks
+    .filter(t => (t.modesAllowed || ['GREEN', 'YELLOW', 'RED', 'BLACK']).includes(mode))
+    .sort((a, b) => {
+      const nominalDiff = a.startMinutes - b.startMinutes;
+      // Preserve broad schedule order. WPI may only influence flexible tasks already near each other.
+      if (Math.abs(nominalDiff) > 60 || a.isProtected || b.isProtected || a.isNonNegotiable || b.isNonNegotiable) {
+        return nominalDiff;
+      }
+      const aFit = getWeeklyPerformanceFitModifier(state, a);
+      const bFit = getWeeklyPerformanceFitModifier(state, b);
+      const aKey = a.startMinutes - aFit * 2;
+      const bKey = b.startMinutes - bFit * 2;
+      return aKey - bKey;
+    });
 
   // Determine if we have a deviation from schedule (e.g. waking late or lagging behind)
   const uncompletedPastScheduled = allowedTasks.filter(
@@ -178,7 +192,12 @@ export const calculateDynamicAllocations = (state: AppState): AllocationResult =
       fallbackLevel,
       isProtected,
       priority: task.isNonNegotiable ? 5 : 3,
-      reasonForAdjustment: adjustmentReason,
+      reasonForAdjustment: (() => {
+        const fit = getWeeklyPerformanceFitModifier(state, task);
+        if (!fit) return adjustmentReason;
+        const sign = fit > 0 ? '+' : '';
+        return `${adjustmentReason} Weekly performance fit: ${sign}${fit} (soft HEE-003 signal).`;
+      })(),
       dependencyStatus: depCheck.isBlocked ? 'BLOCKED' : 'SATISFIED',
     });
 
