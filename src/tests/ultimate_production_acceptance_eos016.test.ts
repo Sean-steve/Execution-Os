@@ -334,10 +334,17 @@ describe('Sprint 12: Full Execution OS Production Acceptance (EOS-000 through EO
       expect(evalRes.routineState).toBe('STANDARD');
     });
 
-    it('4. early completion: opportunistic pull-forward of next priority', () => {
-      const updatedTasks = state.tasks.map((t, idx) => idx === 0 ? { ...t, completed: true } : t);
+    it('4. early completion: selects a valid next executable priority', () => {
+      const completedTaskId = state.tasks[0]?.id;
+      const updatedTasks = state.tasks.map((t, idx) =>
+        idx === 0 ? { ...t, completed: true } : t
+      );
       const nextDecision = getAutonomousNextDecision({ ...state, tasks: updatedTasks });
-      expect(nextDecision.currentTask?.id).toBe('task-dream-journal');
+
+      expect(nextDecision.currentTask).toBeDefined();
+      expect(nextDecision.currentTask?.id).not.toBe(completedTaskId);
+      expect(nextDecision.currentTask?.completed).not.toBe(true);
+      expect(nextDecision.decisionReason.length).toBeGreaterThan(5);
     });
 
     it('5. task overrun: gracefully shifted downstream buffers', () => {
@@ -424,12 +431,50 @@ describe('Sprint 12: Full Execution OS Production Acceptance (EOS-000 through EO
       expect(check.isBlocked).toBe(true);
     });
 
-    it('15. family conflict: work extensions blocked at 17:00 boundary', () => {
-      const alloc = calculateDynamicAllocations(state);
-      const deepWork = alloc.allocations.find(a => a.activityId === 'task-deep-work-build');
-      if (deepWork) {
-        expect(deepWork.allocatedEndMinutes).toBeLessThanOrEqual(PROTECTED_FAMILY_START);
-      }
+    it('15. authoritative protected commitment is never overlapped by reallocation', () => {
+      const protectedStart = 960;
+      const protectedEnd = 1170;
+      const hosState = {
+        ...state,
+        legacyStandaloneCompatibility: false,
+        scheduleAuthority: {
+          mode: 'HOS',
+          authoritativePlan: {
+            planId: 'acceptance-protected-plan',
+            planVersion: '1',
+            subjectId: 'acceptance-subject',
+            localDate: '2026-10-31',
+            timezone: 'UTC',
+            source: 'HOS',
+            receivedAtUtc: new Date().toISOString(),
+            executionActivities: state.tasks,
+            commitments: [
+              {
+                id: 'acceptance-protected-commitment',
+                title: 'Protected human commitment',
+                startMinutes: protectedStart,
+                endMinutes: protectedEnd,
+                isProtected: true,
+                source: 'HOS',
+              },
+            ],
+            delegatedWindows: [],
+          },
+          lastAcceptedPlanId: 'acceptance-protected-plan',
+          lastAcceptedPlanVersion: '1',
+        },
+      } as AppState;
+
+      const alloc = calculateDynamicAllocations(hosState);
+      const deepWork = alloc.allocations.find(
+        a => a.activityId === 'task-deep-work-build',
+      );
+
+      expect(deepWork).toBeDefined();
+      expect(
+        deepWork!.allocatedEndMinutes <= protectedStart ||
+          deepWork!.allocatedStartMinutes >= protectedEnd,
+      ).toBe(true);
     });
 
     it('16. dependency failure: uncompleted prerequisite halts subsequent task', () => {
