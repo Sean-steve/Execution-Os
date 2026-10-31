@@ -43,9 +43,17 @@ import {
   RewardLedgerEntity,
   RewardDefinitionEntity,
   DayHistoryEntity,
-  LegacyRawMetadataEntity
+  LegacyRawMetadataEntity,
+  PerformanceSessionEntity,
+  PerformanceProtocolEntity,
+  DailyPerformanceRecordEntity,
+  WeeklyPerformanceRecordEntity,
+  DayOfWeekPerformanceProfileEntity,
+  WeeklyInsightEntity,
+  WeeklyAdaptationRecommendationEntity
 } from './entities';
 import { CanonicalDatabaseSchema, createEmptyCanonicalSchema } from './canonicalDatabase';
+import { CANONICAL_PERFORMANCE_PROTOCOLS } from '../data/performanceProtocols';
 
 export const DEFAULT_USER_ID = 'user_primary';
 export const DEFAULT_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
@@ -521,7 +529,83 @@ export class EntityMapper {
       });
     });
 
-    // 16. Legacy Raw Metadata (Preserve unknown state safely)
+    // 16. HEE-011 Human Performance Sessions & Protocol Versions
+    (state.performanceSessions || []).forEach(session => {
+      schema.performance_sessions.push({
+        ...(session as any),
+        userId: session.userId || this.userId,
+        version: session.version || 1,
+        createdAtUtc: session.createdAtUtc || nowUtc,
+        updatedAtUtc: session.updatedAtUtc || nowUtc,
+      } as PerformanceSessionEntity);
+    });
+
+    CANONICAL_PERFORMANCE_PROTOCOLS.forEach(protocol => {
+      schema.performance_protocols.push({
+        id: protocol.id,
+        userId: this.userId,
+        protocolVersion: protocol.version,
+        name: protocol.name,
+        description: protocol.description,
+        applicableActivityType: protocol.applicableActivityType,
+        applicableEnvironment: protocol.applicableEnvironment,
+        steps: protocol.steps,
+        preparationRituals: protocol.preparationRituals,
+        evidencePolicy: protocol.evidencePolicy,
+        completionPolicy: protocol.completionPolicy,
+        targetDurationMinutes: protocol.targetDurationMinutes,
+        minimumDurationMinutes: protocol.minimumDurationMinutes,
+        version: 1,
+        createdAtUtc: nowUtc,
+        updatedAtUtc: nowUtc,
+      } as PerformanceProtocolEntity);
+    });
+
+    // 17. EOS-WPI-001 Weekly Performance Intelligence
+    (state.dailyPerformanceRecords || []).forEach(record => {
+      schema.daily_performance_records.push({
+        ...record,
+        version: 1,
+        updatedAtUtc: record.finalizedAtUtc || record.createdAtUtc || nowUtc,
+      } as DailyPerformanceRecordEntity);
+    });
+
+    (state.weeklyPerformanceRecords || []).forEach(record => {
+      schema.weekly_performance_records.push({
+        ...record,
+        version: 1,
+        updatedAtUtc: record.finalizedAtUtc || record.createdAtUtc || nowUtc,
+      } as WeeklyPerformanceRecordEntity);
+    });
+
+    (state.dayOfWeekPerformanceProfiles || []).forEach(profileRecord => {
+      schema.day_of_week_performance_profiles.push({
+        ...profileRecord,
+        version: 1,
+        createdAtUtc: profileRecord.windowStart ? `${profileRecord.windowStart}T00:00:00.000Z` : nowUtc,
+      } as DayOfWeekPerformanceProfileEntity);
+    });
+
+    (state.weeklyInsights || []).forEach(insight => {
+      schema.weekly_insights.push({
+        ...insight,
+        userId: this.userId,
+        version: 1,
+        createdAtUtc: nowUtc,
+        updatedAtUtc: nowUtc,
+      } as WeeklyInsightEntity);
+    });
+
+    (state.weeklyAdaptationRecommendations || []).forEach(recommendation => {
+      schema.weekly_adaptation_recommendations.push({
+        ...recommendation,
+        userId: this.userId,
+        version: 1,
+        updatedAtUtc: recommendation.createdAtUtc || nowUtc,
+      } as WeeklyAdaptationRecommendationEntity);
+    });
+
+    // 18. Legacy Raw Metadata (Preserve unknown state safely)
     const knownKeys = new Set([
       'currentMode', 'dayType', 'routineState', 'routineChangeReason', 'autonomyLevel',
       'isSimulatedTime', 'simulatedTime', 'tasks', 'activities', 'activityInstances',
@@ -533,7 +617,9 @@ export class EntityMapper {
       'focusSession', 'victoryQuestionAnswer', 'morningWorkoutSetsDone',
       'afternoonWorkoutSetsDone', 'morningOutdoorMinutes', 'meditationMinutes',
       'selectedDayOverride', 'disciplinePenaltiesCount', 'strictTimeEnforcement',
-      'earlyExecutionConfirmTask'
+      'earlyExecutionConfirmTask', 'performanceSessions', 'activePerformanceSessionId',
+      'dailyPerformanceRecords', 'weeklyPerformanceRecords', 'dayOfWeekPerformanceProfiles',
+      'weeklyInsights', 'weeklyAdaptationRecommendations'
     ]);
 
     Object.keys(state).forEach(key => {
@@ -873,6 +959,25 @@ export class EntityMapper {
       history: history.length > 0 ? history : (fallback?.history || []),
       activeView: (profile?.activeView as any) || fallback?.activeView || 'DASHBOARD',
       pointsAwardedTasks: fallback?.pointsAwardedTasks || [],
+      performanceSessions: schema.performance_sessions.length
+        ? schema.performance_sessions.map(session => ({ ...session }))
+        : (fallback?.performanceSessions || []),
+      activePerformanceSessionId: fallback?.activePerformanceSessionId || null,
+      dailyPerformanceRecords: schema.daily_performance_records.length
+        ? schema.daily_performance_records.map(({ version: _v, updatedAtUtc: _u, ...record }) => record)
+        : (fallback?.dailyPerformanceRecords || []),
+      weeklyPerformanceRecords: schema.weekly_performance_records.length
+        ? schema.weekly_performance_records.map(({ version: _v, updatedAtUtc: _u, ...record }) => record)
+        : (fallback?.weeklyPerformanceRecords || []),
+      dayOfWeekPerformanceProfiles: schema.day_of_week_performance_profiles.length
+        ? schema.day_of_week_performance_profiles.map(({ version: _v, createdAtUtc: _c, ...profileRecord }) => profileRecord)
+        : (fallback?.dayOfWeekPerformanceProfiles || []),
+      weeklyInsights: schema.weekly_insights.length
+        ? schema.weekly_insights.map(({ userId: _uid, version: _v, createdAtUtc: _c, updatedAtUtc: _u, ...insight }) => insight)
+        : (fallback?.weeklyInsights || []),
+      weeklyAdaptationRecommendations: schema.weekly_adaptation_recommendations.length
+        ? schema.weekly_adaptation_recommendations.map(({ userId: _uid, version: _v, updatedAtUtc: _u, ...recommendation }) => recommendation)
+        : (fallback?.weeklyAdaptationRecommendations || []),
       activeTimers: fallback?.activeTimers || {
         outdoorLight: { isRunning: false, startedAt: null, accumulatedSeconds: 0, targetSeconds: 600 },
         meditation: { isRunning: false, startedAt: null, accumulatedSeconds: 0, targetSeconds: 1800 },
