@@ -6,7 +6,6 @@ import {
   retainAdaptationProposal,
   measureAdaptationPerformance,
   rejectAdaptationProposal,
-  ,
   getHistoricalDataForWindow
 } from '../services/adaptationEngine';
 import { generateLongitudinalExecutionHistory } from './fixtures/syntheticLongitudinalHistory';
