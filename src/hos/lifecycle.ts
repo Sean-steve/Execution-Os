@@ -1,4 +1,5 @@
 import { HOSSubjectContext } from './identityBridge';
+import { IHOSBoundaryStore, MemoryHOSBoundaryStore, defaultHOSBoundaryStore } from './boundaryStore';
 
 export type HOSEngineLifecycleState = 'REGISTERED' | 'ACTIVE' | 'PAUSED' | 'DEGRADED';
 
@@ -11,15 +12,15 @@ export interface HOSEngineLifecycleRecord {
 }
 
 export class HOSEngineLifecycleRegistry {
-  private records = new Map<string, HOSEngineLifecycleRecord>();
+  constructor(private store: IHOSBoundaryStore = new MemoryHOSBoundaryStore()) {}
 
   private key(subject: Pick<HOSSubjectContext, 'subjectId' | 'tenantId'>) {
     return `${subject.tenantId}::${subject.subjectId}`;
   }
 
   get(subject: HOSSubjectContext): HOSEngineLifecycleRecord {
-    const key = this.key(subject);
-    return this.records.get(key) || {
+    const record = this.store.getLifecycle(this.key(subject));
+    return record || {
       subjectId: subject.subjectId,
       tenantId: subject.tenantId,
       state: 'REGISTERED',
@@ -35,7 +36,7 @@ export class HOSEngineLifecycleRegistry {
       updatedAtUtc: new Date().toISOString(),
       reason,
     };
-    this.records.set(this.key(subject), record);
+    this.store.setLifecycle(this.key(subject), record);
     return record;
   }
 
@@ -47,4 +48,4 @@ export class HOSEngineLifecycleRegistry {
   }
 }
 
-export const defaultHOSEngineLifecycleRegistry = new HOSEngineLifecycleRegistry();
+export const defaultHOSEngineLifecycleRegistry = new HOSEngineLifecycleRegistry(defaultHOSBoundaryStore);

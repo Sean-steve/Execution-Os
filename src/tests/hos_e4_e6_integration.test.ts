@@ -15,9 +15,10 @@ import {
   IHOSEventMeshTransport,
   MemoryHOSEventMeshTransport,
 } from '../hos/eventMesh';
-import { MemoryDeadLetterQueue } from '../services/deadLetterQueue';
+import { FileDeadLetterQueue, MemoryDeadLetterQueue } from '../services/deadLetterQueue';
 import { HOSEngineLifecycleRegistry } from '../hos/lifecycle';
 import { SystemEvent } from '../types';
+import { FileHOSBoundaryStore, MemoryHOSBoundaryStore } from '../hos/boundaryStore';
 
 class TestSubjectRepositoryFactory implements IHOSRepositoryFactory {
   private repos = new Map<string, IExecutionRepository>();
@@ -95,6 +96,7 @@ describe('HumanKernelOS E4-E6 Integration Certification', () => {
   let transport: MemoryHOSEventMeshTransport;
   let bridge: HOSEventMeshBridge;
   let lifecycle: HOSEngineLifecycleRegistry;
+  let boundaryStore: MemoryHOSBoundaryStore;
   let app: any;
 
   beforeEach(() => {
@@ -102,12 +104,14 @@ describe('HumanKernelOS E4-E6 Integration Certification', () => {
     process.env.HOS_EXECUTION_SHARED_SECRET = 'test-hos-execution-shared-secret-at-least-32-chars';
     factory = new TestSubjectRepositoryFactory();
     transport = new MemoryHOSEventMeshTransport();
-    bridge = new HOSEventMeshBridge(transport, new MemoryDeadLetterQueue(), 1);
-    lifecycle = new HOSEngineLifecycleRegistry();
+    boundaryStore = new MemoryHOSBoundaryStore();
+    bridge = new HOSEventMeshBridge(transport, new MemoryDeadLetterQueue(), 1, boundaryStore);
+    lifecycle = new HOSEngineLifecycleRegistry(boundaryStore);
     app = createApp({
       hosRepositoryFactory: factory,
       hosEventMesh: bridge,
       hosLifecycle: lifecycle,
+      hosBoundaryStore: boundaryStore,
     });
   });
 
@@ -520,4 +524,111 @@ describe('HumanKernelOS E4-E6 Integration Certification', () => {
     expect((await failingBridge.listDeadLetters(subject))).toHaveLength(1);
     expect(failingBridge.listAudit(subject)[0].error).toContain('simulated mesh outage');
   });
+  it('E4-E6: boundary identity, lifecycle, idempotency and Event Mesh audit survive process restart', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'execution-os-hos-boundary-'));
+    const boundaryPath = path.join(tempDir, 'hos-boundary.json');
+    const dlqPath = path.join(tempDir, 'hos-dlq.json');
+    const subjectData = path.join(tempDir, 'subjects');
+
+    try {
+      const assertion = assertionFor('hos-restart-user');
+      const headers = headersFor(assertion);
+      const subject = contextFor(assertion);
+
+      const store1 = new FileHOSBoundaryStore(boundaryPath);
+      const dlq1 = new FileDeadLetterQueue(dlqPath);
+      const transport1 = new MemoryHOSEventMeshTransport();
+      const bridge1 = new HOSEventMeshBridge(transport1, dlq1, 1, store1);
+      const lifecycle1 = new HOSEngineLifecycleRegistry(store1);
+      const repos1 = new HOSSubjectScopedRepositoryFactory(subjectData);
+
+      const seeded = JSON.parse(JSON.stringify(LEGACY_STANDALONE_FIXTURE_STATE));
+      seeded.subjectId = subject.subjectId;
+      seeded.tenantId = subject.tenantId;
+      await repos1.forSubject(subject).saveState(seeded);
+
+      const app1 = createApp({
+        hosRepositoryFactory: repos1,
+        hosEventMesh: bridge1,
+        hosLifecycle: lifecycle1,
+        hosBoundaryStore: store1,
+      });
+
+      const pause = await request(app1)
+        .post('/api/v1/hos/lifecycle')
+        .set(headers)
+        .send({ action: 'PAUSE', reason: 'restart certification' });
+      expect(pause.status).toBe(200);
+
+      const resume = await request(app1)
+        .post('/api/v1/hos/lifecycle')
+        .set(headers)
+        .send({ action: 'RESUME' });
+      expect(resume.status).toBe(200);
+
+      const first = await request(app1)
+        .post('/api/v1/hos/capabilities/session.start')
+        .set(headers)
+        .set('Idempotency-Key', 'restart-session-start')
+        .send({ activityInstanceId: 'task-deep-work-build', environmentType: 'INTEGRATED' });
+      expect(first.status).toBe(200);
+      expect(transport1.published.filter(e => e.type === 'execution.session.started')).toHaveLength(1);
+
+      lifecycle1.set(subject, 'PAUSED', 'persist across restart');
+
+      // Simulated process restart: all adapter objects are recreated from disk.
+      const store2 = new FileHOSBoundaryStore(boundaryPath);
+      const dlq2 = new FileDeadLetterQueue(dlqPath);
+      const transport2 = new MemoryHOSEventMeshTransport();
+      const bridge2 = new HOSEventMeshBridge(transport2, dlq2, 1, store2);
+      const lifecycle2 = new HOSEngineLifecycleRegistry(store2);
+      const repos2 = new HOSSubjectScopedRepositoryFactory(subjectData);
+      const app2 = createApp({
+        hosRepositoryFactory: repos2,
+        hosEventMesh: bridge2,
+        hosLifecycle: lifecycle2,
+        hosBoundaryStore: store2,
+      });
+
+      const lifecycleAfterRestart = await request(app2)
+        .get('/api/v1/hos/lifecycle')
+        .set(headers);
+      expect(lifecycleAfterRestart.status).toBe(200);
+      expect(lifecycleAfterRestart.body.data.state).toBe('PAUSED');
+
+      lifecycle2.set(subject, 'ACTIVE', 'resume certification');
+
+      const replay = await request(app2)
+        .post('/api/v1/hos/capabilities/session.start')
+        .set(headers)
+        .set('Idempotency-Key', 'restart-session-start')
+        .send({ activityInstanceId: 'task-deep-work-build', environmentType: 'INTEGRATED' });
+      expect(replay.status).toBe(200);
+      expect(replay.headers['x-idempotent-replay']).toBe('true');
+      expect(transport2.published).toHaveLength(0);
+
+      const event: SystemEvent = {
+        event_id: 'evt-restart-dedupe',
+        event_type: 'ActivityStarted',
+        event_version: '1.0.0',
+        occurred_at: new Date().toISOString(),
+        actor: 'SYSTEM_KERNEL',
+        subject: 'task-deep-work-build',
+        scope: 'EXECUTION',
+        payload: { taskId: 'task-deep-work-build' },
+        metadata: { currentMinutes: 0, mode: 'GREEN', routineState: 'STANDARD' },
+      };
+      const delivered = await bridge2.publish(event, subject);
+      expect(delivered?.status).toBe('DELIVERED');
+
+      const store3 = new FileHOSBoundaryStore(boundaryPath);
+      const bridge3 = new HOSEventMeshBridge(new MemoryHOSEventMeshTransport(), new FileDeadLetterQueue(dlqPath), 1, store3);
+      const duplicate = await bridge3.publish(event, subject);
+      expect(duplicate?.status).toBe('SKIPPED_DUPLICATE');
+      expect(bridge3.listAudit(subject).some(row => row.eventId === 'evt-restart-dedupe')).toBe(true);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
 });

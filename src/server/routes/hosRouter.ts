@@ -16,6 +16,7 @@ import {
 } from '../../hos/lifecycle';
 import { HOSCapabilityService } from '../../hos/capabilityService';
 import { ApiError, AuthenticationError, ValidationError } from '../errors';
+import { IHOSBoundaryStore, MemoryHOSBoundaryStore } from '../../hos/boundaryStore';
 
 function stableFingerprint(value: any): string {
   const normalize = (input: any): any => {
@@ -41,11 +42,11 @@ function subjectFrom(req: Request): HOSSubjectContext {
 export function createHOSRouter(
   repositories: IHOSRepositoryFactory = new HOSSubjectScopedRepositoryFactory(),
   eventMesh: HOSEventMeshBridge = defaultHOSEventMeshBridge,
-  lifecycle: HOSEngineLifecycleRegistry = defaultHOSEngineLifecycleRegistry
+  lifecycle: HOSEngineLifecycleRegistry = defaultHOSEngineLifecycleRegistry,
+  boundaryStore: IHOSBoundaryStore = new MemoryHOSBoundaryStore()
 ): Router {
   const router = Router();
-  const capabilities = new HOSCapabilityService(repositories, eventMesh, lifecycle);
-  const signalIdempotency = new Map<string, { fingerprint: string; response: any }>();
+  const capabilities = new HOSCapabilityService(repositories, eventMesh, lifecycle, boundaryStore);
 
   router.get('/manifest', (_req, res) => {
     res.status(200).json({ success: true, data: HOS_ENGINE_MANIFEST });
@@ -121,7 +122,7 @@ export function createHOSRouter(
 
       const scopedKey = `${subject.tenantId}::${subject.subjectId}::${type}::${idempotencyKey}`;
       const fingerprint = stableFingerprint(payload);
-      const cached = signalIdempotency.get(scopedKey);
+      const cached = boundaryStore.getIdempotency(`signal::${scopedKey}`);
       if (cached) {
         if (cached.fingerprint !== fingerprint) {
           throw new ValidationError('Idempotency key reuse detected with a different HOS signal payload.');
@@ -188,7 +189,11 @@ export function createHOSRouter(
         },
         events: result.events || [],
       };
-      signalIdempotency.set(scopedKey, { fingerprint, response: JSON.parse(JSON.stringify(response)) });
+      boundaryStore.setIdempotency(`signal::${scopedKey}`, {
+        fingerprint,
+        response: JSON.parse(JSON.stringify(response)),
+        createdAtUtc: new Date().toISOString(),
+      });
       res.status(200).json(response);
     } catch (err) {
       next(err);

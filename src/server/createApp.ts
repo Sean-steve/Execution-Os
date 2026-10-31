@@ -9,6 +9,7 @@ import { HOSEventMeshBridge, defaultHOSEventMeshBridge } from '../hos/eventMesh'
 import { HOSEngineLifecycleRegistry, defaultHOSEngineLifecycleRegistry } from '../hos/lifecycle';
 import { ApiError, InternalError } from './errors';
 import { SecurityEngine } from './security';
+import { IHOSBoundaryStore, defaultHOSBoundaryStore } from '../hos/boundaryStore';
 
 export interface AppOptions {
   repository?: IExecutionRepository;
@@ -17,6 +18,7 @@ export interface AppOptions {
   hosRepositoryFactory?: IHOSRepositoryFactory;
   hosEventMesh?: HOSEventMeshBridge;
   hosLifecycle?: HOSEngineLifecycleRegistry;
+  hosBoundaryStore?: IHOSBoundaryStore;
 }
 
 export function createApp(options: AppOptions = {}): Express {
@@ -54,7 +56,8 @@ export function createApp(options: AppOptions = {}): Express {
   const hosRouter = createHOSRouter(
     options.hosRepositoryFactory || new HOSSubjectScopedRepositoryFactory(),
     options.hosEventMesh || defaultHOSEventMeshBridge,
-    options.hosLifecycle || defaultHOSEngineLifecycleRegistry
+    options.hosLifecycle || defaultHOSEngineLifecycleRegistry,
+    options.hosBoundaryStore || defaultHOSBoundaryStore
   );
   app.use('/api/v1/hos', hosRouter);
 
