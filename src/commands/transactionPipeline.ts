@@ -73,6 +73,7 @@ import {
   measureAdaptationPerformance
 } from '../services/adaptationEngine';
 import { upsertDailyPerformanceRecord, reconcileWeeklyPerformance, generateWeeklyAdaptationRecommendations } from '../services/weeklyPerformanceIntelligence';
+import { domainExecutionPolicies } from '../domainPolicies';
 
 /**
  * TransactionPipeline / Command Bus:
@@ -240,32 +241,10 @@ export class TransactionPipeline {
         const { taskId, executionStatus, missedWindow, penaltyCutPoints, completedAtMinutes } = command.payload;
         const completionTime = completedAtMinutes !== undefined ? completedAtMinutes : currentMinutes;
 
-        // Trading is structurally gated. Completion may never fabricate protocol evidence.
-        if (taskId === 'task-trading-prep' || taskId === 'task-trading-protocol') {
-          const p = state.tradingProtocol;
-          const disciplinedNoTrade = p.marketAnalyzed && p.closedTerminal && p.noSetupJustified && !p.executed;
-          const validSetupPrepared =
-            p.marketAnalyzed &&
-            p.setupDetected &&
-            p.strategyCriteriaMet &&
-            p.riskLimitsSatisfied &&
-            p.stopLossDefined;
-          if (!disciplinedNoTrade && !validSetupPrepared) {
-            throw new Error('TRADING_GATE_CLOSED: Trading preparation cannot complete until analysis produces either a valid setup or a disciplined No Trade terminal outcome.');
-          }
-        }
-        if (taskId === 'task-trading-execution') {
-          const p = state.tradingProtocol;
-          const validExecutedTrade =
-            p.marketAnalyzed &&
-            p.setupDetected &&
-            p.strategyCriteriaMet &&
-            p.riskLimitsSatisfied &&
-            p.stopLossDefined &&
-            p.executed &&
-            p.closedTerminal;
-          if (!validExecutedTrade) {
-            throw new Error('TRADING_GATE_CLOSED: Trading execution cannot complete until a valid executed trade reaches terminal closure.');
+        // Domain-specific completion gates are evaluated through registered adapters.
+        for (const result of domainExecutionPolicies.evaluateCompletion(state, taskId)) {
+          if (result.blocked) {
+            throw new Error((result.errorCode || 'DOMAIN_POLICY_DENIED') + ': ' + result.reasons.join('; '));
           }
         }
 
