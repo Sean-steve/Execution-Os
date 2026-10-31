@@ -457,6 +457,7 @@ export type EventType =
   | 'OverrideCreated'
   | 'DisciplinePenaltyRecorded'
   | 'PointsAwarded'
+  | 'RewardRedeemed'
   | 'PerformanceSessionCreated'
   | 'PerformancePreparationStarted'
   | 'PerformanceReady'
