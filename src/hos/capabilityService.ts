@@ -78,6 +78,24 @@ export class HOSCapabilityService {
     } as AppState;
   }
 
+  private assertDelegatedActivity(state: AppState, activityId: string): void {
+    if (state.scheduleAuthority?.mode !== 'HOS') return;
+
+    const plan = state.scheduleAuthority.authoritativePlan;
+    if (!plan) {
+      throw new Error('No authoritative HOS Daily Operating Plan is bound to this execution subject.');
+    }
+
+    const explicitActivityIds = new Set((plan.executionActivities || []).map(activity => activity.id));
+    for (const window of plan.delegatedWindows || []) {
+      for (const id of window.allowedActivityIds || []) explicitActivityIds.add(id);
+    }
+
+    if (!explicitActivityIds.has(activityId)) {
+      throw new Error(`Activity "${activityId}" is not delegated by HOS plan ${plan.planId} version ${plan.planVersion}.`);
+    }
+  }
+
   private disciplineScore(state: AppState) {
     const committed = state.tasks.filter(task => task.isNonNegotiable);
     const completed = committed.filter(task => task.completed);
@@ -85,8 +103,24 @@ export class HOSCapabilityService {
     const recovered = completed.filter(task => (task.fallbackLevel || 0) > 0 || task.executionStatus === 'FALLBACK_EXECUTED');
     const penalties = state.disciplinePenaltiesCount || 0;
 
-    const completionRate = committed.length ? completed.length / committed.length : 1;
-    const onTimeRate = completed.length ? onTime.length / completed.length : 1;
+    if (committed.length === 0) {
+      return {
+        score: 0,
+        scale: 100,
+        status: 'INSUFFICIENT_EVIDENCE',
+        evidence: {
+          committedActivities: 0,
+          completedCommitments: 0,
+          onTimeCommitments: 0,
+          recoveredCommitments: 0,
+          disciplinePenaltiesCount: penalties,
+        },
+        calculatedAtUtc: new Date().toISOString(),
+      };
+    }
+
+    const completionRate = completed.length / committed.length;
+    const onTimeRate = completed.length ? onTime.length / completed.length : 0;
     const recoveryRate = completed.length ? recovered.length / completed.length : 0;
     const score = Math.max(0, Math.min(100, Math.round(
       completionRate * 70 +
@@ -98,6 +132,7 @@ export class HOSCapabilityService {
     return {
       score,
       scale: 100,
+      status: 'MEASURED',
       evidence: {
         committedActivities: committed.length,
         completedCommitments: completed.length,
@@ -174,6 +209,7 @@ export class HOSCapabilityService {
         }
 
         if (!payload?.activityInstanceId) throw new Error('session.start requires sessionId or activityInstanceId.');
+        this.assertDelegatedActivity(state, payload.activityInstanceId);
         await run({
           type: 'CreatePerformanceSession',
           payload: {
@@ -226,6 +262,7 @@ export class HOSCapabilityService {
         if (!payload?.taskId || payload?.targetTierLevel === undefined) {
           throw new Error('fallback.trigger requires taskId and targetTierLevel.');
         }
+        this.assertDelegatedActivity(state, payload.taskId);
         await run({
           type: 'TriggerFallback',
           payload: {
