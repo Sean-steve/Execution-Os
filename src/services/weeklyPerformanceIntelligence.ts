@@ -452,3 +452,37 @@ export function generateWeeklyAdaptationRecommendations(state: AppState): Weekly
   };
   return [...(state.weeklyAdaptationRecommendations || []), recommendation];
 }
+
+
+/**
+ * Bounded HEE-003 soft-fit signal from longitudinal weekly evidence.
+ * It never overrides hard constraints, protected commitments, deadlines or dependencies.
+ */
+export function getWeeklyPerformanceFitModifier(
+  state: AppState,
+  task: any,
+  localDate: string = state.activeDate || dateOnly()
+): number {
+  const isCognitive =
+    task.category === 'DEEP_WORK' ||
+    task.category === 'BUSINESS' ||
+    task.interactiveActionType === 'FOCUS_BLOCK' ||
+    task.interactiveActionType === 'COMPANY_TARGET' ||
+    task.interactiveActionType === 'COMMAND_CENTER';
+
+  if (!isCognitive) return 0;
+
+  const profiles = state.dayOfWeekPerformanceProfiles || [];
+  if (!profiles.length) return 0;
+
+  const weekday = toUtcDate(localDate).getUTCDay();
+  const profile = profiles.find(p => p.weekday === weekday);
+  if (!profile || !['MODERATE', 'STRONG'].includes(profile.confidence)) return 0;
+
+  const comparable = profiles.filter(p => ['MODERATE', 'STRONG'].includes(p.confidence));
+  const baseline = avg(comparable.map(p => p.meanFocusPerformance));
+  if (!baseline) return 0;
+
+  // ±8 is intentionally small: WPI is advisory scheduling evidence, not authority.
+  return round(Math.max(-8, Math.min(8, (profile.meanFocusPerformance - baseline) / 4)));
+}
