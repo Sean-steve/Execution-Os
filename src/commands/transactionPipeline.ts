@@ -81,7 +81,7 @@ import { upsertDailyPerformanceRecord, reconcileWeeklyPerformance, generateWeekl
 import { reconcileAllocationPlanWithAuthority, requestSingleActivityScheduleChange, acceptHOSDailyOperatingPlan, resolveHOSScheduleProposal } from '../services/scheduleAuthority';
 import { applyLegacyTradingProtocolUpdate } from '../adapters/legacyTradingCompatibilityAdapter';
 import { upsertExternalExecutionGate } from '../services/externalExecutionGate';
-import { acceptHOSHumanStateContext, acceptPDIEExecutionRecommendation } from '../hos/humanStateDecisionBridge';
+import { acceptHOSHumanStateContext, acceptPDIEExecutionRecommendation, projectExecutionBehavioralSignal, recordBehavioralSignal } from '../hos/humanStateDecisionBridge';
 
 /**
  * TransactionPipeline / Command Bus:
@@ -1027,6 +1027,10 @@ export class TransactionPipeline {
     // 5. EVENT CREATION & PERSISTENCE STAGE
     if (createdEvents.length > 0) {
       state.events = [...createdEvents, ...(state.events || [])].slice(0, 200);
+      for (const event of createdEvents) {
+        const behavioralSignal = projectExecutionBehavioralSignal(event, state);
+        if (behavioralSignal) state = recordBehavioralSignal(state, behavioralSignal);
+      }
       try {
         await defaultDurableEventStore.appendBatch(createdEvents);
         await defaultEventDispatcher.dispatchBatch(createdEvents);
