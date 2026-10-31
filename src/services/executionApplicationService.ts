@@ -127,6 +127,9 @@ export class ExecutionApplicationService {
       case 'CancelPerformanceSession':
         command = new CancelPerformanceSessionCommand(desc.payload);
         break;
+      case 'TriggerFallback':
+        command = new TriggerFallbackCommand(desc.payload);
+        break;
       case 'AcceptDisciplinePenalty':
         command = new AcceptDisciplinePenaltyCommand(desc.payload);
         break;

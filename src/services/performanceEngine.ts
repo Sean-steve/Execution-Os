@@ -159,7 +159,7 @@ export class HumanPerformanceEngine {
 
     const session: PerformanceSession = {
       id: `perf-session-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
-      userId: options?.userId || 'usr-default-owner',
+      userId: options?.userId || state.subjectId || state.scheduleAuthority?.authoritativePlan?.subjectId || 'standalone-subject',
       activityInstanceId: task.id,
       activityDefinitionId: task.anchorId || task.id,
       routineVersionId: (state as any).routineVersionId || 'legacy-v1',

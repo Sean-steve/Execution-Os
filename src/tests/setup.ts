@@ -1,3 +1,7 @@
+process.env.EXECUTION_OS_IDENTITY_MODE = 'LEGACY_STANDALONE';
+process.env.LEGACY_STANDALONE_USER_ID = 'user-default-1';
+process.env.HOS_EXECUTION_SHARED_SECRET = 'test-hos-execution-shared-secret-at-least-32-chars';
+
 import { DEFAULT_APP_STATE } from '../data/defaultData';
 import { LEGACY_STANDALONE_FIXTURE_STATE } from './fixtures/legacyStandaloneProfile';
 
