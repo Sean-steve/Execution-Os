@@ -14,6 +14,32 @@ export const tradingExecutionPolicy: DomainExecutionPolicy = {
   id: 'domain.trading.execution-gate',
   appliesTo: isTradingActivity,
 
+  evaluateDependency(state, taskId) {
+    const p = state.tradingProtocol;
+    if (!p?.isTradingDay || taskId !== 'task-trading-execution') {
+      return { blocked: false, reasons: [] };
+    }
+
+    const reasons: string[] = [];
+    const blockingTaskIds: string[] = [];
+    if (!p.marketAnalyzed && !p.preMarketAnalysisDone) {
+      reasons.push('Market Analysis must be completed before trading execution.');
+      blockingTaskIds.push('task-trading-protocol');
+    }
+    if (p.marketAnalyzed && !p.setupDetected && !p.noSetupJustified) {
+      reasons.push('No-Setup hard rule: trade execution is blocked until a valid setup exists or No Trade is justified.');
+      blockingTaskIds.push('task-trading-protocol');
+    }
+
+    return {
+      blocked: reasons.length > 0,
+      reasons,
+      blockingTaskIds,
+      errorCode: 'TRADING_GATE_CLOSED',
+      rule: 'DOMAIN_TRADING_DEPENDENCY_GATE',
+    };
+  },
+
   evaluateStart(state, taskId) {
     const p = state.tradingProtocol;
     if (!p?.isTradingDay) return { blocked: false, reasons: [] };
@@ -23,7 +49,7 @@ export const tradingExecutionPolicy: DomainExecutionPolicy = {
 
     if (taskId === 'task-trading-execution') {
       if (!p.marketAnalyzed && !p.preMarketAnalysisDone) {
-        reasons.push('Market analysis must be finalized before trading execution.');
+        reasons.push('Trading Gatekeeper: Market analysis must be finalized before trading execution.');
         blockingTaskIds.push('task-trading-protocol');
       }
       if (!p.setupDetected && !p.noSetupJustified) {
