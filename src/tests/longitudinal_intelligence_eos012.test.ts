@@ -6,9 +6,10 @@ import {
   retainAdaptationProposal,
   measureAdaptationPerformance,
   rejectAdaptationProposal,
-  generateLongitudinalExecutionHistory,
+  ,
   getHistoricalDataForWindow
 } from '../services/adaptationEngine';
+import { generateLongitudinalExecutionHistory } from './fixtures/syntheticLongitudinalHistory';
 import { ScenarioBuilder } from './fixtures/scenarioBuilder';
 import { 
   AppState, 
