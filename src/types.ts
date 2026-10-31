@@ -1491,7 +1491,18 @@ export interface ScheduleProposal {
   resolvedAtUtc?: string;
 }
 
+export interface HOSIdentityBinding {
+  hosUserId: string;
+  tenantId: string;
+  issuer: 'HumanKernelOS';
+  boundAtUtc: string;
+  lastAuthenticatedAtUtc: string;
+}
+
 export interface AppState {
+  subjectId?: string;
+  tenantId?: string;
+  hosIdentityBinding?: HOSIdentityBinding;
   activeDate?: string; // "YYYY-MM-DD"
   timezone?: string; // "UTC", "America/New_York", etc.
   currentMode: SystemMode;
