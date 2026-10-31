@@ -20,6 +20,7 @@ import {
 import { AppState, DreamEntry } from '../types';
 import { sound } from '../services/soundService';
 import confetti from 'canvas-confetti';
+import { defaultApplicationService } from '../services/executionApplicationService';
 
 interface MorningPrimeViewProps {
   state: AppState;
@@ -111,27 +112,20 @@ export const MorningPrimeView: React.FC<MorningPrimeViewProps> = ({
     setInitialMeditationSeconds(durationMinutes * 60);
   };
 
-  const handleCompleteIdentityCheck = () => {
-    sound.playChime('success');
-    try {
-      confetti({ particleCount: 30, spread: 50, origin: { y: 0.5 } });
-    } catch {
-      // ignore
+  const handleCompleteIdentityCheck = async () => {
+    const draft: AppState = {
+      ...state,
+      identityStatus: { ...state.identityStatus, completedToday: true },
+    };
+    const result = await defaultApplicationService.completeActivity({ taskId: 'task-awaken', executionStatus: 'ON_TIME' }, draft);
+    if (result.success && result.state) {
+      sound.playChime('success');
+      try { confetti({ particleCount: 30, spread: 50, origin: { y: 0.5 } }); } catch {}
+      onUpdateState(() => result.state!);
     }
-    onUpdateState(prev => ({
-      ...prev,
-      identityStatus: {
-        ...prev.identityStatus,
-        completedToday: true,
-      },
-      tasks: prev.tasks.map(t =>
-        t.id === 'task-awaken' ? { ...t, completed: true } : t
-      ),
-      rewardPoints: prev.rewardPoints + 5,
-    }));
   };
 
-  const handleSaveDream = (e: React.FormEvent) => {
+  const handleSaveDream = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!dreamTitle.trim() || !dreamContent.trim()) return;
 
@@ -144,36 +138,32 @@ export const MorningPrimeView: React.FC<MorningPrimeViewProps> = ({
       tags: dreamTags,
     };
 
-    sound.playChime('success');
-    onUpdateState(prev => ({
-      ...prev,
-      dreamEntries: [newEntry, ...prev.dreamEntries],
-      tasks: prev.tasks.map(t =>
-        t.id === 'task-dream-journal' ? { ...t, completed: true } : t
-      ),
-      rewardPoints: prev.rewardPoints + 3,
-    }));
-
-    setDreamTitle('');
-    setDreamContent('');
-    setIsSavingDream(false);
+    const draft: AppState = {
+      ...state,
+      dreamEntries: [newEntry, ...state.dreamEntries],
+    };
+    const result = await defaultApplicationService.completeActivity({ taskId: 'task-dream-journal', executionStatus: 'ON_TIME' }, draft);
+    if (result.success && result.state) {
+      sound.playChime('success');
+      onUpdateState(() => result.state!);
+      setDreamTitle('');
+      setDreamContent('');
+      setIsSavingDream(false);
+    }
   };
 
-  const handleAddWorkoutSet = () => {
+  const handleAddWorkoutSet = async () => {
     sound.playChime('start');
-    onUpdateState(prev => {
-      const nextSets = prev.morningWorkoutSetsDone + 1;
-      const targetSets = prev.currentMode === 'GREEN' ? 2 : 1;
-      const taskDone = nextSets >= targetSets;
-      return {
-        ...prev,
-        morningWorkoutSetsDone: nextSets,
-        tasks: prev.tasks.map(t =>
-          t.id === 'task-workout-morning' ? { ...t, completed: taskDone } : t
-        ),
-        rewardPoints: prev.rewardPoints + (taskDone ? 5 : 2),
-      };
-    });
+    const targetSets = state.currentMode === 'GREEN' ? 2 : 1;
+    const currentSets = Math.min(targetSets, state.morningWorkoutSetsDone || 0);
+    if (currentSets >= targetSets) return;
+    const nextSets = currentSets + 1;
+    let workingState: AppState = { ...state, morningWorkoutSetsDone: nextSets };
+    if (nextSets >= targetSets) {
+      const result = await defaultApplicationService.completeActivity({ taskId: 'task-workout-morning', executionStatus: 'ON_TIME' }, workingState);
+      if (result.success && result.state) workingState = result.state;
+    }
+    onUpdateState(() => workingState);
   };
 
   const formatTimer = (secs: number) => {
@@ -486,15 +476,13 @@ export const MorningPrimeView: React.FC<MorningPrimeViewProps> = ({
             </button>
 
             <button
-              onClick={() => {
-                sound.playChime('success');
-                onUpdateState(prev => ({
-                  ...prev,
-                  tasks: prev.tasks.map(t =>
-                    t.id === 'task-outside-light' ? { ...t, completed: true } : t
-                  ),
-                  rewardPoints: prev.rewardPoints + 3,
-                }));
+              onClick={async () => {
+                if (outsideSeconds > 0) return;
+                const result = await defaultApplicationService.completeActivity({ taskId: 'task-outside-light', executionStatus: 'ON_TIME' }, state);
+                if (result.success && result.state) {
+                  sound.playChime('success');
+                  onUpdateState(() => result.state!);
+                }
               }}
               className="px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-semibold"
             >
