@@ -117,8 +117,9 @@ export class FileHOSBoundaryStore extends MemoryHOSBoundaryStore {
     const dir = path.dirname(this.filePath);
     fs.mkdirSync(dir, { recursive: true });
     const tmp = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(this.snapshot, null, 2), 'utf-8');
+    fs.writeFileSync(tmp, JSON.stringify(this.snapshot, null, 2), { encoding: 'utf-8', mode: 0o600 });
     fs.renameSync(tmp, this.filePath);
+    fs.chmodSync(this.filePath, 0o600);
   }
 
   override setIdempotency(key: string, record: HOSBoundaryIdempotencyRecord) { super.setIdempotency(key, record); this.persist(); }
