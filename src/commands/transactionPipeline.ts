@@ -47,7 +47,10 @@ import {
   RequestPerformanceExtensionCommand,
   ClosePerformanceSessionCommand,
   CancelPerformanceSessionCommand,
-  RedeemRewardCommand
+  RedeemRewardCommand,
+  SetHOSOperatingPlanCommand,
+  ResolveScheduleProposalCommand,
+  UpsertExternalExecutionGateCommand
 } from './commands';
 import { HumanPerformanceEngine } from '../services/performanceEngine';
 import { evaluateRoutineState } from '../services/routineEngine';
@@ -73,8 +76,9 @@ import {
   measureAdaptationPerformance
 } from '../services/adaptationEngine';
 import { upsertDailyPerformanceRecord, reconcileWeeklyPerformance, generateWeeklyAdaptationRecommendations } from '../services/weeklyPerformanceIntelligence';
-import { reconcileAllocationPlanWithAuthority, requestSingleActivityScheduleChange } from '../services/scheduleAuthority';
+import { reconcileAllocationPlanWithAuthority, requestSingleActivityScheduleChange, acceptHOSDailyOperatingPlan, resolveHOSScheduleProposal } from '../services/scheduleAuthority';
 import { applyLegacyTradingProtocolUpdate } from '../adapters/legacyTradingCompatibilityAdapter';
+import { upsertExternalExecutionGate } from '../services/externalExecutionGate';
 
 /**
  * TransactionPipeline / Command Bus:
@@ -139,7 +143,47 @@ export class TransactionPipeline {
     let failureReason: string | undefined;
 
     try {
-      if (command instanceof PlanTomorrowCommand) {
+      if (command instanceof SetHOSOperatingPlanCommand) {
+        state = acceptHOSDailyOperatingPlan(state, command.payload.plan);
+        createdEvents.push(createSystemEvent(
+          'HOSOperatingPlanReceived',
+          command.payload.plan.planId,
+          {
+            planId: command.payload.plan.planId,
+            planVersion: command.payload.plan.planVersion,
+            subjectId: command.payload.plan.subjectId,
+            localDate: command.payload.plan.localDate,
+            delegatedWindowsCount: command.payload.plan.delegatedWindows.length,
+            commitmentsCount: command.payload.plan.commitments.length,
+          },
+          state,
+          'SYSTEM_KERNEL',
+          undefined,
+          clock
+        ));
+      } else if (command instanceof ResolveScheduleProposalCommand) {
+        state = resolveHOSScheduleProposal(state, command.payload.proposalId, command.payload.decision);
+        createdEvents.push(createSystemEvent(
+          command.payload.decision === 'ACCEPT' ? 'ScheduleProposalAccepted' : 'ScheduleProposalRejected',
+          command.payload.proposalId,
+          { decision: command.payload.decision },
+          state,
+          'GOVERNANCE_GUARD',
+          undefined,
+          clock
+        ));
+      } else if (command instanceof UpsertExternalExecutionGateCommand) {
+        state = upsertExternalExecutionGate(state, command.payload.gate);
+        createdEvents.push(createSystemEvent(
+          'ExternalExecutionGateUpdated',
+          command.payload.gate.id,
+          command.payload.gate,
+          state,
+          'SYSTEM_KERNEL',
+          undefined,
+          clock
+        ));
+      } else if (command instanceof PlanTomorrowCommand) {
         state.tomorrowPlan = {
           ...state.tomorrowPlan,
           ...command.payload.plan,
