@@ -184,3 +184,77 @@ export function reconcileWithScheduleAuthority(
     proposedChangesCount: changes.length,
   };
 }
+
+
+export function bindHosDailyOperatingPlan(
+  state: AppState,
+  authority: NonNullable<AppState['scheduleAuthority']>
+): AppState {
+  if (authority.mode !== 'HOS_DELEGATED') {
+    throw new Error('HOS Daily Operating Plan binding requires HOS_DELEGATED authority mode.');
+  }
+
+  return {
+    ...state,
+    scheduleAuthority: {
+      ...authority,
+      approvedWindows: [...authority.approvedWindows],
+      protectedWindows: [...authority.protectedWindows],
+      receivedAtUtc: authority.receivedAtUtc || new Date().toISOString(),
+    },
+    pendingScheduleProposals: (state.pendingScheduleProposals || []).map(proposal =>
+      proposal.status === 'PROPOSED'
+        ? { ...proposal, status: 'SUPERSEDED' as const }
+        : proposal
+    ),
+    lastReallocationReason: `HOS Daily Operating Plan ${authority.planId || 'unidentified'} revision ${authority.planRevision ?? 0} accepted as schedule authority.`,
+  };
+}
+
+export function resolveScheduleProposal(
+  state: AppState,
+  proposalId: string,
+  decision: 'ACCEPTED' | 'REJECTED'
+): AppState {
+  const proposal = (state.pendingScheduleProposals || []).find(p => p.id === proposalId);
+  if (!proposal || proposal.status !== 'PROPOSED') return state;
+
+  let tasks = state.tasks;
+  let allocations = state.dynamicAllocations;
+
+  if (decision === 'ACCEPTED') {
+    const changes = new Map(proposal.changes.map(change => [change.activityId, change]));
+    tasks = tasks.map(task => {
+      const change = changes.get(task.id);
+      if (!change) return task;
+      return {
+        ...task,
+        allocatedStartMinutes: change.proposedStartMinutes,
+        allocatedEndMinutes: change.proposedEndMinutes,
+        fallbackLevel: change.fallbackLevel ?? task.fallbackLevel,
+      };
+    });
+    allocations = allocations.map(allocation => {
+      const change = changes.get(allocation.activityId);
+      if (!change) return allocation;
+      return {
+        ...allocation,
+        allocatedStartMinutes: change.proposedStartMinutes,
+        allocatedEndMinutes: change.proposedEndMinutes,
+        durationMinutes: change.proposedEndMinutes - change.proposedStartMinutes,
+        isCompressed: change.compressed,
+        fallbackLevel: change.fallbackLevel ?? allocation.fallbackLevel,
+        reasonForAdjustment: 'Accepted by HOS schedule authority.',
+      };
+    });
+  }
+
+  return {
+    ...state,
+    tasks,
+    dynamicAllocations: allocations,
+    pendingScheduleProposals: (state.pendingScheduleProposals || []).map(p =>
+      p.id === proposalId ? { ...p, status: decision } : p
+    ),
+  };
+}
