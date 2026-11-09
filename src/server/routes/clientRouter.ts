@@ -16,6 +16,7 @@ const CLIENT_COMMANDS = new Set([
   'RollbackAdaptationProposal','RetainAdaptationProposal','RejectAdaptationProposal',
   'EvaluateAdaptationMeasurement','AcceptDisciplinePenalty','RecordTradingProtocol',
   'RecordCompanyOfTheDay','RecordDailyReview','RecordIdentityStatus','RecordExecutionProgress',
+  'SetStrictTimeEnforcement','CreateReward',
   'CreatePerformanceSession','PreparePerformanceSession','ReadyPerformanceSession',
   'StartPerformanceSession','PausePerformanceSession','ResumePerformanceSession',
   'AdvancePerformanceStep','AttachPerformanceArtifact','RecordPerformanceEvidence',
@@ -69,7 +70,7 @@ function assertCommandAuthority(subject: HOSSubjectContext, type: string) {
     HOSIdentityBridge.requireConsent(subject, 'execution.adaptation');
     return;
   }
-  if (['PauseAutonomy','ResumeAutonomy','OverrideActivity'].includes(type)) {
+  if (['PauseAutonomy','ResumeAutonomy','OverrideActivity','SetStrictTimeEnforcement'].includes(type)) {
     HOSIdentityBridge.requirePermission(subject, 'execution.governance.write');
     HOSIdentityBridge.requireConsent(subject, 'execution.control');
     return;
