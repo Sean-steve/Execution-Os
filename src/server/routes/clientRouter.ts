@@ -15,7 +15,7 @@ const CLIENT_COMMANDS = new Set([
   'SetSystemMode','SetDayType','TriggerFallback','ApplyAdaptationProposal',
   'RollbackAdaptationProposal','RetainAdaptationProposal','RejectAdaptationProposal',
   'EvaluateAdaptationMeasurement','AcceptDisciplinePenalty','RecordTradingProtocol',
-  'RecordCompanyOfTheDay','RecordDailyReview','RecordIdentityStatus',
+  'RecordCompanyOfTheDay','RecordDailyReview','RecordIdentityStatus','RecordExecutionProgress',
   'CreatePerformanceSession','PreparePerformanceSession','ReadyPerformanceSession',
   'StartPerformanceSession','PausePerformanceSession','ResumePerformanceSession',
   'AdvancePerformanceStep','AttachPerformanceArtifact','RecordPerformanceEvidence',
