@@ -113,16 +113,25 @@ export const MorningPrimeView: React.FC<MorningPrimeViewProps> = ({
   };
 
   const handleCompleteIdentityCheck = async () => {
-    const draft: AppState = {
-      ...state,
-      identityStatus: { ...state.identityStatus, completedToday: true },
-    };
-    const result = await defaultApplicationService.completeActivity({ taskId: 'task-awaken', executionStatus: 'ON_TIME' }, draft);
-    if (result.success && result.state) {
-      sound.playChime('success');
-      try { confetti({ particleCount: 30, spread: 50, origin: { y: 0.5 } }); } catch {}
-      onUpdateState(() => result.state!);
+    const recorded = await defaultApplicationService.execute({
+      type: 'RecordIdentityStatus',
+      payload: { identity: { completedToday: true } },
+    }, state);
+    if (!recorded.success || !recorded.state) return;
+
+    let workingState = recorded.state;
+    const task = workingState.tasks.find(item => item.id === 'task-awaken');
+    if (task && !task.completed) {
+      const completed = await defaultApplicationService.completeActivity({
+        taskId: task.id,
+        executionStatus: 'ON_TIME',
+      }, workingState);
+      if (completed.success && completed.state) workingState = completed.state;
     }
+
+    sound.playChime('success');
+    try { confetti({ particleCount: 30, spread: 50, origin: { y: 0.5 } }); } catch {}
+    onUpdateState(() => workingState);
   };
 
   const handleSaveDream = async (e: React.FormEvent) => {
@@ -138,18 +147,27 @@ export const MorningPrimeView: React.FC<MorningPrimeViewProps> = ({
       tags: dreamTags,
     };
 
-    const draft: AppState = {
-      ...state,
-      dreamEntries: [newEntry, ...state.dreamEntries],
-    };
-    const result = await defaultApplicationService.completeActivity({ taskId: 'task-dream-journal', executionStatus: 'ON_TIME' }, draft);
-    if (result.success && result.state) {
-      sound.playChime('success');
-      onUpdateState(() => result.state!);
-      setDreamTitle('');
-      setDreamContent('');
-      setIsSavingDream(false);
+    const recorded = await defaultApplicationService.execute({
+      type: 'RecordExecutionProgress',
+      payload: { dreamEntry: newEntry },
+    }, state);
+    if (!recorded.success || !recorded.state) return;
+
+    let workingState = recorded.state;
+    const task = workingState.tasks.find(item => item.id === 'task-dream-journal');
+    if (task && !task.completed) {
+      const completed = await defaultApplicationService.completeActivity({
+        taskId: task.id,
+        executionStatus: 'ON_TIME',
+      }, workingState);
+      if (completed.success && completed.state) workingState = completed.state;
     }
+
+    sound.playChime('success');
+    onUpdateState(() => workingState);
+    setDreamTitle('');
+    setDreamContent('');
+    setIsSavingDream(false);
   };
 
   const handleAddWorkoutSet = async () => {
@@ -158,10 +176,23 @@ export const MorningPrimeView: React.FC<MorningPrimeViewProps> = ({
     const currentSets = Math.min(targetSets, state.morningWorkoutSetsDone || 0);
     if (currentSets >= targetSets) return;
     const nextSets = currentSets + 1;
-    let workingState: AppState = { ...state, morningWorkoutSetsDone: nextSets };
+
+    const recorded = await defaultApplicationService.execute({
+      type: 'RecordExecutionProgress',
+      payload: { morningWorkoutSetsDone: nextSets },
+    }, state);
+    if (!recorded.success || !recorded.state) return;
+
+    let workingState = recorded.state;
     if (nextSets >= targetSets) {
-      const result = await defaultApplicationService.completeActivity({ taskId: 'task-workout-morning', executionStatus: 'ON_TIME' }, workingState);
-      if (result.success && result.state) workingState = result.state;
+      const task = workingState.tasks.find(item => item.id === 'task-workout-morning');
+      if (task && !task.completed) {
+        const completed = await defaultApplicationService.completeActivity({
+          taskId: task.id,
+          executionStatus: 'ON_TIME',
+        }, workingState);
+        if (completed.success && completed.state) workingState = completed.state;
+      }
     }
     onUpdateState(() => workingState);
   };
@@ -478,7 +509,15 @@ export const MorningPrimeView: React.FC<MorningPrimeViewProps> = ({
             <button
               onClick={async () => {
                 if (outsideSeconds > 0) return;
-                const result = await defaultApplicationService.completeActivity({ taskId: 'task-outside-light', executionStatus: 'ON_TIME' }, state);
+                const progress = await defaultApplicationService.execute({
+                  type: 'RecordExecutionProgress',
+                  payload: { morningOutdoorMinutes: 10 },
+                }, state);
+                if (!progress.success || !progress.state) return;
+                const result = await defaultApplicationService.completeActivity({
+                  taskId: 'task-outside-light',
+                  executionStatus: 'ON_TIME',
+                }, progress.state);
                 if (result.success && result.state) {
                   sound.playChime('success');
                   onUpdateState(() => result.state!);
