@@ -4,7 +4,7 @@ import { AppState, RoutineTask, AdaptationProposal, SystemEvent } from '../types
 import { evaluateRoutineState } from '../services/routineEngine';
 import { scanAndResolveDeviations } from '../services/deviationEngine';
 import { getTaskFallbackTiers, getFallbackPolicyForTask } from '../services/fallbackEngine';
-import { calculateDynamicAllocations } from '../services/allocationEngine';
+import { calculateDynamicAllocations, evaluatePerformanceExtensionAllocation } from '../services/allocationEngine';
 const PROTECTED_FAMILY_START = 960;
 const PROTECTED_FAMILY_END = 1170;
 import { getAutonomousNextDecision } from '../services/decisionEngine';
@@ -421,12 +421,29 @@ describe('Sprint 12: Full Execution OS Production Acceptance (EOS-000 through EO
       expect(check.isBlocked).toBe(true);
     });
 
-    it('15. family conflict: work extensions blocked at 17:00 boundary', () => {
-      const alloc = calculateDynamicAllocations(state);
-      const deepWork = alloc.allocations.find(a => a.activityId === 'task-deep-work-build');
-      if (deepWork) {
-        expect(deepWork.allocatedEndMinutes).toBeLessThanOrEqual(PROTECTED_FAMILY_START);
-      }
+    it('15. family conflict: work extensions blocked at protected boundary', () => {
+      const deterministicState: AppState = {
+        ...state,
+        tasks: state.tasks.map(task => {
+          if (task.id === 'task-deep-work-build') {
+            return {
+              ...task,
+              allocatedStartMinutes: 900,
+              allocatedEndMinutes: 950,
+            };
+          }
+          return task;
+        }),
+      };
+
+      const extension = evaluatePerformanceExtensionAllocation(
+        deterministicState,
+        'task-deep-work-build',
+        30
+      );
+
+      expect(extension.approved).toBe(false);
+      expect(extension.reason).toContain('protected');
     });
 
     it('16. dependency failure: uncompleted prerequisite halts subsequent task', () => {
