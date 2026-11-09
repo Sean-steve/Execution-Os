@@ -104,49 +104,57 @@ export const DeepWorkView: React.FC<DeepWorkViewProps> = ({
     setInitialSeconds(minutes * 60);
   };
 
-  const handleToggleAction = (id: string) => {
+  const persistCompany = async (nextActions: CompanyAction[], completeWhenReady = false) => {
+    const recorded = await defaultApplicationService.execute({
+      type: 'RecordCompanyOfTheDay',
+      payload: {
+        company: {
+          companyName,
+          objective,
+          targetOutcome,
+          actions: nextActions,
+        },
+      },
+    }, state);
+    if (!recorded.success || !recorded.state) return;
+
+    let workingState = recorded.state;
+    if (completeWhenReady && nextActions.filter(action => action.done).length >= 2) {
+      const target = workingState.tasks.find(task =>
+        task.id === 'task-company-of-day' || task.interactiveActionType === 'COMPANY_TARGET'
+      );
+      if (target && !target.completed) {
+        const completed = await defaultApplicationService.completeActivity({
+          taskId: target.id,
+          executionStatus: 'ON_TIME',
+        }, workingState);
+        if (completed.success && completed.state) workingState = completed.state;
+      }
+    }
+    onUpdateState(() => workingState);
+  };
+
+  const handleToggleAction = async (id: string) => {
     sound.playChime('success');
     const updated = actions.map(a =>
       a.id === id ? { ...a, done: !a.done } : a
     );
     setActions(updated);
 
-    const allDone = updated.every(a => a.done);
-    if (allDone) {
-      try {
-        confetti({ particleCount: 40, spread: 60, origin: { y: 0.5 } });
-      } catch {
-        // ignore
-      }
+    if (updated.every(a => a.done)) {
+      try { confetti({ particleCount: 40, spread: 60, origin: { y: 0.5 } }); } catch {}
     }
 
-    onUpdateState(prev => ({
-      ...prev,
-      companyOfTheDay: {
-        ...prev.companyOfTheDay,
-        actions: updated,
-      },
-      tasks: prev.tasks.map(t =>
-        t.id === 'task-company-of-day' ? { ...t, completed: updated.filter(a => a.done).length >= 2 } : t
-      ),
-    }));
+    await persistCompany(updated, true);
   };
 
-  const handleSaveCompanySetup = (e: React.FormEvent) => {
+  const handleSaveCompanySetup = async (e: React.FormEvent) => {
     e.preventDefault();
     sound.playChime('start');
-    onUpdateState(prev => ({
-      ...prev,
-      companyOfTheDay: {
-        companyName,
-        objective,
-        targetOutcome,
-        actions,
-      },
-    }));
+    await persistCompany(actions);
   };
 
-  const handleAddCustomAction = () => {
+  const handleAddCustomAction = async () => {
     if (!newActionText.trim()) return;
     const newAct: CompanyAction = {
       id: `act-${Date.now()}`,
@@ -156,14 +164,7 @@ export const DeepWorkView: React.FC<DeepWorkViewProps> = ({
     const updated = [...actions, newAct];
     setActions(updated);
     setNewActionText('');
-
-    onUpdateState(prev => ({
-      ...prev,
-      companyOfTheDay: {
-        ...prev.companyOfTheDay,
-        actions: updated,
-      },
-    }));
+    await persistCompany(updated);
   };
 
   const formatTimer = (secs: number) => {
