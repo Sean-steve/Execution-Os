@@ -11,7 +11,8 @@ import {
   CompanyOfTheDay,
   DailyReview,
   IdentityStatus,
-  DynamicAllocation
+  DynamicAllocation,
+  DreamEntry
 } from '../types';
 import { IClock } from '../clock';
 import { IUnitOfWork, IExecutionRepository } from '../repositories/interfaces';
@@ -196,6 +197,16 @@ export interface RecordDailyReviewPayload {
 export interface RecordIdentityStatusPayload {
   identity: Partial<IdentityStatus>;
 }
+
+export interface RecordExecutionProgressPayload {
+  victoryQuestionAnswer?: string;
+  dreamEntry?: DreamEntry;
+  morningWorkoutSetsDone?: number;
+  afternoonWorkoutSetsDone?: number;
+  morningOutdoorMinutes?: number;
+  meditationMinutes?: number;
+}
+
 
 export interface LateWakeRecoveryPayload {
   actualWakeMinutes?: number;
