@@ -62,7 +62,7 @@ import { getAutonomousNextDecision } from '../services/decisionEngine';
 import { checkTaskDependencies } from '../services/dependencyEngine';
 import { selectOptimalFallbackTier } from '../services/fallbackEngine';
 import { createSystemEvent } from '../services/eventBus';
-import { PENALTY_POINTS_MISSED_WINDOW } from '../services/storageService';
+import { PENALTY_POINTS_MISSED_WINDOW, calculate7Pillars } from '../services/storageService';
 import { defaultDurableEventStore } from '../services/durableEventStore';
 import { defaultEventDispatcher } from '../services/eventDispatcher';
 import {
@@ -771,6 +771,20 @@ export class TransactionPipeline {
           ...command.payload.review,
         };
         const reviewDate = state.dailyReview.date || state.activeDate || clock.toISOString().slice(0, 10);
+        const pillarResult = calculate7Pillars(state);
+        const pillarMap: any = {};
+        for (const pillar of pillarResult.pillars) pillarMap[pillar.key] = pillar.satisfied;
+        state.history = [
+          {
+            date: reviewDate,
+            score: pillarResult.score,
+            mode: state.currentMode,
+            dayType: state.dayType,
+            pillars: pillarMap,
+            topVictory: state.dailyReview.accomplished?.slice(0, 80) || state.victoryQuestionAnswer,
+          },
+          ...(state.history || []).filter(entry => entry.date !== reviewDate),
+        ];
         state = upsertDailyPerformanceRecord(state, reviewDate);
         state = reconcileWeeklyPerformance(state, reviewDate);
         state.weeklyAdaptationRecommendations = generateWeeklyAdaptationRecommendations(state);
