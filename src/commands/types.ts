@@ -12,7 +12,8 @@ import {
   DailyReview,
   IdentityStatus,
   DynamicAllocation,
-  DreamEntry
+  DreamEntry,
+  Reward
 } from '../types';
 import { IClock } from '../clock';
 import { IUnitOfWork, IExecutionRepository } from '../repositories/interfaces';
@@ -196,6 +197,14 @@ export interface RecordDailyReviewPayload {
 
 export interface RecordIdentityStatusPayload {
   identity: Partial<IdentityStatus>;
+}
+
+export interface SetStrictTimeEnforcementPayload {
+  enabled: boolean;
+}
+
+export interface CreateRewardPayload {
+  reward: Reward;
 }
 
 export interface RecordExecutionProgressPayload {
