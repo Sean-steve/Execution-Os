@@ -29,6 +29,7 @@ import {
   RetainAdaptationProposalCommand,
   RejectAdaptationProposalCommand,
   EvaluateAdaptationMeasurementCommand,
+  ScanAdaptationsCommand,
   AcceptDisciplinePenaltyCommand,
   RecordTradingProtocolCommand,
   RecordCompanyOfTheDayCommand,
@@ -78,7 +79,8 @@ import {
   rollbackAdaptationProposal,
   retainAdaptationProposal,
   rejectAdaptationProposal,
-  measureAdaptationPerformance
+  measureAdaptationPerformance,
+  scanLongitudinalAdaptations
 } from '../services/adaptationEngine';
 import { upsertDailyPerformanceRecord, reconcileWeeklyPerformance, generateWeeklyAdaptationRecommendations } from '../services/weeklyPerformanceIntelligence';
 import { replenishRewardsCatalog } from '../services/rewardCatalogService';
@@ -731,6 +733,24 @@ export class TransactionPipeline {
           const evt = createSystemEvent('AdaptationMeasured', prop.id, prop, state, 'SYSTEM_KERNEL', undefined, clock);
           createdEvents.push(evt);
         }
+      } else if (command instanceof ScanAdaptationsCommand) {
+        const scan = scanLongitudinalAdaptations(state, command.payload.window);
+        state.longitudinalWindow = command.payload.window;
+        state.adaptationPatterns = scan.patterns;
+        state.adaptationProposals = scan.proposals;
+        createdEvents.push(createSystemEvent(
+          'AdaptationPatternDetected',
+          `adaptation-scan-${command.payload.window}`,
+          {
+            window: command.payload.window,
+            patternCount: scan.patterns.length,
+            proposalCount: scan.proposals.length,
+          },
+          state,
+          'SYSTEM_KERNEL',
+          undefined,
+          clock
+        ));
       } else if (command instanceof AcceptDisciplinePenaltyCommand) {
         const taskId = command.payload.taskId;
         const penalty = command.payload.penaltyPoints || PENALTY_POINTS_MISSED_WINDOW;
