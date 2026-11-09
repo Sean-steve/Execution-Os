@@ -158,6 +158,7 @@ export class HOSSubjectRuntimeRegistry {
         issuer: 'HumanKernelOS',
         authenticatedAtUtc: new Date().toISOString(),
       };
+      this.lifecycle.set(subject, 'ACTIVE', 'Restored from durable E10 runtime registry.');
       this.workerFor(subject).start();
     }
     return subjects.length;
