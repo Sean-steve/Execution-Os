@@ -30,6 +30,8 @@ import { TimelineRoutineView } from './TimelineRoutineView';
 import { getActiveDayTheme } from '../services/dayThemeService';
 import { sound } from '../services/soundService';
 import { AccessibleConfirmModal } from './ui/AccessibleConfirmModal';
+import { defaultApplicationService } from '../services/executionApplicationService';
+import { authoritativeRuntimeClient } from '../services/authoritativeRuntimeClient';
 
 export type SystemSubTab = 
   | 'ROUTINES'
@@ -59,6 +61,7 @@ export const SystemWorkspaceView: React.FC<SystemWorkspaceViewProps> = ({
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
   const activeTheme = getActiveDayTheme(state);
+  const authoritativeRuntime = authoritativeRuntimeClient.prefersAuthoritativeRuntime();
 
   const subTabs = [
     { id: 'ROUTINES' as const, label: 'Routines & Anchors', icon: ListOrdered },
@@ -85,6 +88,11 @@ export const SystemWorkspaceView: React.FC<SystemWorkspaceViewProps> = ({
   };
 
   const handleImportState = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (authoritativeRuntime) {
+      sound.playChime('warning');
+      e.target.value = '';
+      return;
+    }
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -174,9 +182,12 @@ export const SystemWorkspaceView: React.FC<SystemWorkspaceViewProps> = ({
                 ].map(item => (
                   <button
                     key={item.level}
-                    onClick={() => {
+                    onClick={async () => {
                       sound.playChime('start');
-                      onUpdateState(prev => ({ ...prev, autonomyLevel: item.level }));
+                      const result = item.level === 0
+                        ? await defaultApplicationService.pauseAutonomy('Manual mode selected from governance workspace', state)
+                        : await defaultApplicationService.resumeAutonomy(item.level, state);
+                      if (result.success && result.state) onUpdateState(() => result.state!);
                     }}
                     className={`p-4 rounded-xl border text-left transition-all ${
                       state.autonomyLevel === item.level
@@ -199,9 +210,13 @@ export const SystemWorkspaceView: React.FC<SystemWorkspaceViewProps> = ({
                   </div>
                 </div>
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     sound.playChime('start');
-                    onUpdateState(prev => ({ ...prev, strictTimeEnforcement: !prev.strictTimeEnforcement }));
+                    const result = await defaultApplicationService.execute({
+                      type: 'SetStrictTimeEnforcement',
+                      payload: { enabled: !state.strictTimeEnforcement },
+                    }, state);
+                    if (result.success && result.state) onUpdateState(() => result.state!);
                   }}
                   className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
                     state.strictTimeEnforcement
@@ -306,7 +321,7 @@ export const SystemWorkspaceView: React.FC<SystemWorkspaceViewProps> = ({
 
               <button
                 onClick={() => setShowResetConfirm(true)}
-                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold shadow-xs transition-colors"
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white text-xs font-semibold shadow-xs transition-colors"
               >
                 Reset to Default Routine
               </button>
@@ -319,7 +334,8 @@ export const SystemWorkspaceView: React.FC<SystemWorkspaceViewProps> = ({
         isOpen={showResetConfirm}
         onClose={() => setShowResetConfirm(false)}
         onConfirm={() => {
-          localStorage.removeItem('execution_os_state');
+          if (authoritativeRuntime) return;
+          localStorage.removeItem('autonomous_execution_os_v1');
           window.location.reload();
         }}
         title="Reset Execution State?"
