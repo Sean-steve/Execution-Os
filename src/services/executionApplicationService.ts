@@ -37,6 +37,8 @@ import {
   RecordDailyReviewCommand,
   RecordIdentityStatusCommand,
   RecordExecutionProgressCommand,
+  SetStrictTimeEnforcementCommand,
+  CreateRewardCommand,
   LateWakeRecoveryCommand,
   CreatePerformanceSessionCommand,
   PreparePerformanceSessionCommand,
@@ -245,6 +247,12 @@ export class ExecutionApplicationService {
         break;
       case 'RecordExecutionProgress':
         command = new RecordExecutionProgressCommand(desc.payload);
+        break;
+      case 'SetStrictTimeEnforcement':
+        command = new SetStrictTimeEnforcementCommand(desc.payload);
+        break;
+      case 'CreateReward':
+        command = new CreateRewardCommand(desc.payload);
         break;
       default:
         throw new Error(`Unknown command type: ${desc.type}`);
