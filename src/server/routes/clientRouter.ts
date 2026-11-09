@@ -78,6 +78,32 @@ function assertCommandAuthority(subject: HOSSubjectContext, type: string) {
   requireAnyConsent(subject, ['execution.performance','execution.schedule']);
 }
 
+async function loadBoundState(repository: any, subject: HOSSubjectContext) {
+  let state = await repository.loadState();
+  if (state.subjectId && state.subjectId !== subject.subjectId) {
+    throw new ValidationError('Authoritative repository subject mismatch.');
+  }
+  if (state.tenantId && state.tenantId !== subject.tenantId) {
+    throw new ValidationError('Authoritative repository tenant mismatch.');
+  }
+  if (!state.subjectId || !state.tenantId) {
+    state = {
+      ...state,
+      subjectId: subject.subjectId,
+      tenantId: subject.tenantId,
+      hosIdentityBinding: {
+        hosUserId: subject.hosUserId,
+        tenantId: subject.tenantId,
+        issuer: 'HumanKernelOS',
+        boundAtUtc: state.hosIdentityBinding?.boundAtUtc || new Date().toISOString(),
+        lastAuthenticatedAtUtc: subject.authenticatedAtUtc,
+      },
+    };
+    await repository.saveState(state);
+  }
+  return state;
+}
+
 export function createClientRouter(
   repositories: IHOSRepositoryFactory,
   eventMesh: HOSEventMeshBridge,
@@ -93,7 +119,7 @@ export function createClientRouter(
       requireAnyConsent(subject, ['execution.schedule','execution.analytics','execution.performance']);
       runtime?.ensureForSubject(subject);
       const repository = repositories.forSubject(subject);
-      const state = await repository.loadState();
+      const state = await loadBoundState(repository, subject);
       res.status(200).json({ success: true, state, version: state.version || 1 });
     } catch (err) {
       next(err);
@@ -133,10 +159,7 @@ export function createClientRouter(
 
       runtime?.ensureForSubject(subject);
       const repository = repositories.forSubject(subject);
-      const state = await repository.loadState();
-      if (state.subjectId && state.subjectId !== subject.subjectId) {
-        throw new ValidationError('Authoritative repository subject mismatch.');
-      }
+      const state = await loadBoundState(repository, subject);
 
       const app = new ExecutionApplicationService(repository);
       const result = await app.execute({ type, payload }, state);
