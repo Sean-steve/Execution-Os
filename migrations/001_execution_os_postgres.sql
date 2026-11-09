@@ -13,4 +13,12 @@ CREATE TABLE IF NOT EXISTS execution_os_subject_state (
 CREATE INDEX IF NOT EXISTS idx_execution_os_subject_state_updated_at
   ON execution_os_subject_state (updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS execution_os_runtime_subjects (
+  tenant_id TEXT NOT NULL,
+  subject_id TEXT NOT NULL,
+  lifecycle TEXT NOT NULL CHECK (lifecycle IN ('REGISTERED', 'ACTIVE', 'PAUSED', 'DEGRADED')),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (tenant_id, subject_id)
+);
+
 COMMIT;
