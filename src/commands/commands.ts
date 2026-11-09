@@ -32,6 +32,7 @@ import {
   RecordCompanyOfTheDayPayload,
   RecordDailyReviewPayload,
   RecordIdentityStatusPayload,
+  RecordExecutionProgressPayload,
   LateWakeRecoveryPayload,
   CreatePerformanceSessionPayload,
   PreparePerformanceSessionPayload,
@@ -462,6 +463,30 @@ export class RecordIdentityStatusCommand implements ICommand {
   constructor(public payload: RecordIdentityStatusPayload) {}
 
   validate() {
+    return { valid: true };
+  }
+}
+
+export class RecordExecutionProgressCommand implements ICommand {
+  readonly type = 'RecordExecutionProgress';
+  constructor(public payload: RecordExecutionProgressPayload) {}
+
+  validate() {
+    const numeric = [
+      this.payload.morningWorkoutSetsDone,
+      this.payload.afternoonWorkoutSetsDone,
+      this.payload.morningOutdoorMinutes,
+      this.payload.meditationMinutes,
+    ].filter(value => value !== undefined);
+    if (numeric.some(value => typeof value !== 'number' || !Number.isFinite(value) || value < 0)) {
+      return { valid: false, error: 'Execution progress counters must be finite non-negative numbers.' };
+    }
+    if (this.payload.dreamEntry) {
+      const entry = this.payload.dreamEntry;
+      if (!entry.id || !entry.title?.trim() || !entry.content?.trim()) {
+        return { valid: false, error: 'Dream entry requires id, title and content.' };
+      }
+    }
     return { valid: true };
   }
 }
