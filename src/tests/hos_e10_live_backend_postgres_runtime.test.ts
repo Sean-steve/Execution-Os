@@ -111,7 +111,7 @@ describe('HOS E10 — Live Backend, PostgreSQL Persistence & Runtime Activation'
     const state = createEmptyCanonicalSchema();
     state.profiles.push({
       id: 'profile-alice',
-      user_id: 'alice',
+      userId: 'alice',
       timezone: 'Africa/Nairobi',
       default_mode: 'NORMAL' as any,
       autonomy_level: 1 as any,
@@ -121,7 +121,7 @@ describe('HOS E10 — Live Backend, PostgreSQL Persistence & Runtime Activation'
     } as any);
 
     await alice.saveData(state);
-    expect((await alice.loadData())?.profiles[0]?.user_id).toBe('alice');
+    expect((await alice.loadData())?.profiles[0]?.userId).toBe('alice');
     expect(await bob.loadData()).toBeNull();
 
     await alice.clear();
