@@ -245,8 +245,8 @@ describe('HumanKernelOS E8-E9 — Production Hardening & Integration Certificati
     const res = await request(app).get('/api/v1/hos/manifest');
 
     expect(res.status).toBe(200);
-    expect(res.body.data.engineVersion).toBe('E9');
-    expect(res.body.data.contractVersion).toBe('1.1.0');
+    expect(res.body.data.engineVersion).toBe('E11');
+    expect(res.body.data.contractVersion).toBe('1.2.0');
     expect(res.body.data.identityAuthority).toBe('HumanKernelOS');
     expect(res.body.data.scheduleAuthority).toBe('HumanKernelOS');
     expect(res.body.data.consumesSignals).toContain('hos.human_state.updated');
