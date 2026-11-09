@@ -18,6 +18,7 @@ import {
 import { ExecutionApiClient, defaultApiClient } from './apiClient';
 import { DEFAULT_APP_STATE } from '../data/defaultData';
 import { defaultIdempotencyStore } from '../server/idempotency';
+import { authoritativeRuntimeClient } from './authoritativeRuntimeClient';
 
 const SYNC_QUEUE_STORAGE_KEY = 'execution_os_sync_queue_v1';
 const CURRENT_DEVICE_STORAGE_KEY = 'execution_os_current_device_v1';
@@ -264,6 +265,25 @@ export class CrossDeviceSyncEngine {
     }
 
     try {
+      if (authoritativeRuntimeClient.canUseAuthoritativeRuntime()) {
+        const state = await authoritativeRuntimeClient.loadState();
+        const serverVersion = state.version || 1;
+        const hasUpdates = serverVersion !== this.lastSyncedVersion;
+        this.lastSyncedVersion = serverVersion;
+        this.currentDevice.lastSeenAt = new Date().toISOString();
+        this.saveCurrentDevice(this.currentDevice);
+        this.syncStatus = this.syncQueue.length ? 'SYNCING' : 'SYNCHRONIZED';
+        const mergedState: AppState = {
+          ...state,
+          version: serverVersion,
+          syncMetadata: this.getSyncMetadata(),
+          registeredDevices: (state as any)?.registeredDevices || [this.currentDevice],
+          conflictLog: this.conflictLog,
+        };
+        this.notifyListeners(mergedState);
+        return { state: mergedState, version: serverVersion, hasUpdates, conflictsResolved: [] };
+      }
+
       const response = await this.apiClient.syncPull(this.lastSyncedVersion, this.currentDevice.id);
       if (response && response.success && response.state) {
         const serverVersion = response.version || response.state.version || 1;
@@ -323,6 +343,34 @@ export class CrossDeviceSyncEngine {
 
     try {
       const itemsToPush = [...this.syncQueue];
+
+      if (authoritativeRuntimeClient.canUseAuthoritativeRuntime()) {
+        let nextState = currentState;
+        let resolvedCount = 0;
+        for (const item of itemsToPush) {
+          const type = item.commandType.endsWith('Command')
+            ? item.commandType.slice(0, -'Command'.length)
+            : item.commandType;
+          const result = await authoritativeRuntimeClient.executeDescriptor(
+            type,
+            item.payload || {},
+            item.idempotencyKey
+          );
+          if (!result.success || !result.state) {
+            throw new Error(result.error || `Authoritative sync command failed: ${type}`);
+          }
+          nextState = result.state;
+          resolvedCount += 1;
+        }
+
+        this.syncQueue = [];
+        this.saveQueue();
+        if (nextState) this.lastSyncedVersion = nextState.version || this.lastSyncedVersion;
+        this.syncStatus = 'SYNCHRONIZED';
+        this.notifyListeners(nextState);
+        return { success: true, state: nextState, resolvedCount, conflicts: [] };
+      }
+
       const res = await this.apiClient.syncPush(itemsToPush, this.lastSyncedVersion, this.currentDevice.id);
 
       if (res && res.success && res.state) {
