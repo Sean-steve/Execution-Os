@@ -41,6 +41,7 @@ import {
   getHistoricalDataForWindow
 } from '../services/adaptationEngine';
 import { getActiveDayTheme } from '../services/dayThemeService';
+import { defaultApplicationService } from '../services/executionApplicationService';
 import { sound } from '../services/soundService';
 
 interface AdaptationProposalsViewProps {
@@ -108,30 +109,43 @@ export const AdaptationProposalsView: React.FC<AdaptationProposalsViewProps> = (
     }, 400);
   };
 
-  const handleApprove = (proposalId: string) => {
-    sound.playChime('success');
-    onUpdateState(prev => applyAdaptationProposal(prev, proposalId, 'USER'));
+  const handleApprove = async (proposalId: string) => {
+    const result = await defaultApplicationService.applyAdaptationProposal(proposalId, state);
+    if (result.success && result.state) {
+      sound.playChime('success');
+      onUpdateState(() => result.state!);
+    }
   };
 
-  const handleReject = (proposalId: string) => {
-    onUpdateState(prev => rejectAdaptationProposal(prev, proposalId));
+  const handleReject = async (proposalId: string) => {
+    const result = await defaultApplicationService.rejectAdaptationProposal(proposalId, state);
+    if (result.success && result.state) onUpdateState(() => result.state!);
   };
 
-  const handleMeasure = (proposalId: string) => {
-    sound.playChime('bell');
-    onUpdateState(prev => measureAdaptationPerformance(prev, proposalId));
+  const handleMeasure = async (proposalId: string) => {
+    const result = await defaultApplicationService.evaluateAdaptationMeasurement(proposalId, state);
+    if (result.success && result.state) {
+      sound.playChime('bell');
+      onUpdateState(() => result.state!);
+    }
   };
 
-  const handleRetain = (proposalId: string) => {
-    sound.playChime('success');
-    onUpdateState(prev => retainAdaptationProposal(prev, proposalId, 'USER'));
+  const handleRetain = async (proposalId: string) => {
+    const result = await defaultApplicationService.retainAdaptationProposal(proposalId, state);
+    if (result.success && result.state) {
+      sound.playChime('success');
+      onUpdateState(() => result.state!);
+    }
   };
 
-  const handleRollback = (proposalId: string) => {
+  const handleRollback = async (proposalId: string) => {
     const reason = rollbackReason[proposalId] || 'Reverted by human operator due to sub-optimal execution drift';
-    sound.playChime('warning');
-    onUpdateState(prev => rollbackAdaptationProposal(prev, proposalId, reason, 'USER'));
-    setShowRollbackPrompt(null);
+    const result = await defaultApplicationService.rollbackAdaptationProposal(proposalId, reason, state);
+    if (result.success && result.state) {
+      sound.playChime('warning');
+      onUpdateState(() => result.state!);
+      setShowRollbackPrompt(null);
+    }
   };
 
   const windowLabels: { id: LongitudinalWindow; label: string; days: number }[] = [
