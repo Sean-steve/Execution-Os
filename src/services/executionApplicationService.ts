@@ -1,4 +1,5 @@
 import { AppState, RoutineTask, SystemMode, DayType, AutonomyLevel, TomorrowPlan, UserOverrideRecord } from '../types';
+import { authoritativeRuntimeClient } from './authoritativeRuntimeClient';
 import { IExecutionRepository, defaultExecutionRepository } from '../repositories';
 import { IClock, getClockForState } from '../clock';
 import { TransactionPipeline } from '../commands/transactionPipeline';
@@ -165,6 +166,81 @@ export class ExecutionApplicationService {
       case 'ResumeActivity':
         command = new ResumeActivityCommand(desc.payload);
         break;
+      case 'PlanTomorrow':
+        command = new PlanTomorrowCommand(desc.payload);
+        break;
+      case 'ActivateDay':
+        command = new ActivateDayCommand(desc.payload);
+        break;
+      case 'LateWakeRecovery':
+        command = new LateWakeRecoveryCommand(desc.payload);
+        break;
+      case 'AdjustActivity':
+        command = new AdjustActivityCommand(desc.payload);
+        break;
+      case 'AdvanceActivity':
+        command = new AdvanceActivityCommand(desc.payload);
+        break;
+      case 'DeferActivity':
+        command = new DeferActivityCommand(desc.payload);
+        break;
+      case 'CompressActivity':
+        command = new CompressActivityCommand(desc.payload);
+        break;
+      case 'ReplaceActivity':
+        command = new ReplaceActivityCommand(desc.payload);
+        break;
+      case 'OverrideActivity':
+        command = new OverrideActivityCommand(desc.payload);
+        break;
+      case 'RecalculateDay':
+        command = new RecalculateDayCommand(desc.payload);
+        break;
+      case 'ApproveDecision':
+        command = new ApproveDecisionCommand(desc.payload);
+        break;
+      case 'RejectDecision':
+        command = new RejectDecisionCommand(desc.payload);
+        break;
+      case 'PauseAutonomy':
+        command = new PauseAutonomyCommand(desc.payload);
+        break;
+      case 'ResumeAutonomy':
+        command = new ResumeAutonomyCommand(desc.payload);
+        break;
+      case 'SetSystemMode':
+        command = new SetSystemModeCommand(desc.payload);
+        break;
+      case 'SetDayType':
+        command = new SetDayTypeCommand(desc.payload);
+        break;
+      case 'ApplyAdaptationProposal':
+        command = new ApplyAdaptationProposalCommand(desc.payload);
+        break;
+      case 'RollbackAdaptationProposal':
+        command = new RollbackAdaptationProposalCommand(desc.payload);
+        break;
+      case 'RetainAdaptationProposal':
+        command = new RetainAdaptationProposalCommand(desc.payload);
+        break;
+      case 'RejectAdaptationProposal':
+        command = new RejectAdaptationProposalCommand(desc.payload);
+        break;
+      case 'EvaluateAdaptationMeasurement':
+        command = new EvaluateAdaptationMeasurementCommand(desc.payload);
+        break;
+      case 'RecordTradingProtocol':
+        command = new RecordTradingProtocolCommand(desc.payload);
+        break;
+      case 'RecordCompanyOfTheDay':
+        command = new RecordCompanyOfTheDayCommand(desc.payload);
+        break;
+      case 'RecordDailyReview':
+        command = new RecordDailyReviewCommand(desc.payload);
+        break;
+      case 'RecordIdentityStatus':
+        command = new RecordIdentityStatusCommand(desc.payload);
+        break;
       default:
         throw new Error(`Unknown command type: ${desc.type}`);
     }
@@ -313,4 +389,23 @@ export class ExecutionApplicationService {
   }
 }
 
-export const defaultApplicationService = new ExecutionApplicationService(defaultExecutionRepository);
+class RuntimeAwareExecutionApplicationService extends ExecutionApplicationService {
+  override async dispatch<TData = any>(command: ICommand<TData>, currentState?: AppState): Promise<CommandResult<TData>> {
+    if (typeof window !== 'undefined') {
+      if (authoritativeRuntimeClient.canUseAuthoritativeRuntime()) {
+        return authoritativeRuntimeClient.executeCommand(command);
+      }
+      if (authoritativeRuntimeClient.requiresAuthoritativeRuntime()) {
+        return {
+          success: false,
+          state: currentState,
+          events: [],
+          error: 'AUTHORITATIVE_SESSION_REQUIRED',
+        };
+      }
+    }
+    return super.dispatch(command, currentState);
+  }
+}
+
+export const defaultApplicationService = new RuntimeAwareExecutionApplicationService(defaultExecutionRepository);
