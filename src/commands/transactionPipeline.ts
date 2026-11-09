@@ -81,6 +81,7 @@ import {
   measureAdaptationPerformance
 } from '../services/adaptationEngine';
 import { upsertDailyPerformanceRecord, reconcileWeeklyPerformance, generateWeeklyAdaptationRecommendations } from '../services/weeklyPerformanceIntelligence';
+import { replenishRewardsCatalog } from '../services/rewardCatalogService';
 import { reconcileAllocationPlanWithAuthority, requestSingleActivityScheduleChange, acceptHOSDailyOperatingPlan, resolveHOSScheduleProposal } from '../services/scheduleAuthority';
 import { applyLegacyTradingProtocolUpdate } from '../adapters/legacyTradingCompatibilityAdapter';
 import { upsertExternalExecutionGate } from '../services/externalExecutionGate';
@@ -822,11 +823,11 @@ export class TransactionPipeline {
           throw new Error('Insufficient reward points.');
         }
         state.rewardPoints = Math.max(0, state.rewardPoints - reward.pointsRequired);
-        state.rewards = state.rewards.map(r =>
+        state.rewards = replenishRewardsCatalog(state.rewards.map(r =>
           r.id === reward.id
             ? { ...r, unlocked: true, redeemed: true, redeemedAt: clock.toISOString() }
             : r
-        );
+        ));
         const evt = createSystemEvent('RewardRedeemed', reward.id, {
           rewardId: reward.id,
           pointsSpent: reward.pointsRequired,
