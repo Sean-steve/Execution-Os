@@ -19,7 +19,6 @@ import {
 import { AppState, Reward } from '../types';
 import { sound } from '../services/soundService';
 import { getActiveDayTheme } from '../services/dayThemeService';
-import { replenishRewardsCatalog } from '../services/rewardCatalogService';
 import confetti from 'canvas-confetti';
 import { defaultApplicationService } from '../services/executionApplicationService';
 
@@ -45,15 +44,14 @@ export const RewardEngineView: React.FC<RewardEngineViewProps> = ({
     const result = await defaultApplicationService.redeemReward(reward.id, state);
     if (!result.success || !result.state) return;
 
-    const replenished = replenishRewardsCatalog(result.state.rewards);
-    onUpdateState(() => ({ ...result.state!, rewards: replenished }));
+    onUpdateState(() => result.state!);
     sound.playChime('success');
     try {
       confetti({ particleCount: 70, spread: 80, origin: { y: 0.5 }, colors: [activeTheme.colorHex, '#ec4899', '#8b5cf6', '#10b981'] });
     } catch {}
   };
 
-  const handleCreateCustomReward = (e: React.FormEvent) => {
+  const handleCreateCustomReward = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTitle.trim()) return;
 
@@ -67,12 +65,14 @@ export const RewardEngineView: React.FC<RewardEngineViewProps> = ({
       redeemed: false,
     };
 
-    sound.playChime('start');
-    onUpdateState(prev => ({
-      ...prev,
-      rewards: [...prev.rewards, newReward],
-    }));
+    const result = await defaultApplicationService.execute({
+      type: 'CreateReward',
+      payload: { reward: newReward },
+    }, state);
+    if (!result.success || !result.state) return;
 
+    sound.playChime('start');
+    onUpdateState(() => result.state!);
     setNewTitle('');
     setNewDesc('');
   };
