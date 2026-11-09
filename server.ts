@@ -3,7 +3,6 @@ import express from 'express';
 import { createApp } from './src/server/createApp';
 import { defaultBackgroundWorker } from './src/services/backgroundWorker';
 import { getExecutionIdentityMode } from './src/server/auth';
-import { createServer as createViteServer } from 'vite';
 import { assertPostgresRuntimeReady, getExecutionPersistenceMode } from './src/canonical/postgresCanonicalStorageEngine';
 import { HOSSubjectScopedRepositoryFactory } from './src/hos/repositoryFactory';
 import { defaultHOSEngineLifecycleRegistry } from './src/hos/lifecycle';
@@ -40,6 +39,7 @@ async function startServer() {
   }
 
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
