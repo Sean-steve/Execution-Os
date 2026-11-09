@@ -22,6 +22,7 @@ import {
 import { AppState, BackgroundJobRecord, BackgroundJobType, ExecutionNotification } from '../types';
 import { defaultApiClient } from '../services/apiClient';
 import { formatMinutesTo12Hour } from '../clock';
+import { authoritativeRuntimeClient } from '../services/authoritativeRuntimeClient';
 
 interface BackgroundSchedulerHUDProps {
   state: AppState;
@@ -57,13 +58,16 @@ export const BackgroundSchedulerHUD: React.FC<BackgroundSchedulerHUDProps> = ({
 
   const notifications = state.notifications || [];
   const unreadNotifications = notifications.filter(n => !n.read);
+  const authoritativeRuntime = authoritativeRuntimeClient.prefersAuthoritativeRuntime();
 
   // Manual Trigger: Single-pass Authoritative Reconciliation
   const handleTriggerTick = async () => {
     setIsTickLoading(true);
     setStatusMessage('Executing single-pass authoritative reconciliation...');
     try {
-      const res = await defaultApiClient.triggerSchedulerTick();
+      const res = authoritativeRuntime
+        ? await authoritativeRuntimeClient.triggerSchedulerTick()
+        : await defaultApiClient.triggerSchedulerTick();
       if (res.data?.state) {
         onUpdateState(() => res.data.state);
       }
@@ -80,12 +84,17 @@ export const BackgroundSchedulerHUD: React.FC<BackgroundSchedulerHUDProps> = ({
     setRunningJobId(job.id);
     setStatusMessage(`Running job: ${job.name}...`);
     try {
-      const res = await defaultApiClient.runSchedulerJob(job.type);
+      const res = authoritativeRuntime
+        ? await authoritativeRuntimeClient.runSchedulerJob(job.type)
+        : await defaultApiClient.runSchedulerJob(job.type);
       setStatusMessage(`Job completed: ${res.data?.summary || 'Success'}`);
       // Refresh state
-      const stateRes = await defaultApiClient.getFullState();
-      if (stateRes.data) {
-        onUpdateState(() => stateRes.data);
+      if (authoritativeRuntime) {
+        const latest = await authoritativeRuntimeClient.loadState();
+        onUpdateState(() => latest);
+      } else {
+        const stateRes = await defaultApiClient.getFullState();
+        if (stateRes.data) onUpdateState(() => stateRes.data);
       }
     } catch (err: any) {
       setStatusMessage(`Job failed: ${err.message}`);
@@ -98,15 +107,21 @@ export const BackgroundSchedulerHUD: React.FC<BackgroundSchedulerHUDProps> = ({
   const handleToggleWorker = async () => {
     const nextEnabled = !scheduler.enabled;
     try {
-      const res = await defaultApiClient.toggleScheduler(nextEnabled);
-      onUpdateState(prev => ({
-        ...prev,
-        scheduler: {
-          ...(prev.scheduler || scheduler),
-          enabled: nextEnabled,
-          isRunning: nextEnabled,
-        },
-      }));
+      if (authoritativeRuntime) {
+        await authoritativeRuntimeClient.toggleScheduler(nextEnabled);
+        const latest = await authoritativeRuntimeClient.loadState();
+        onUpdateState(() => latest);
+      } else {
+        await defaultApiClient.toggleScheduler(nextEnabled);
+        onUpdateState(prev => ({
+          ...prev,
+          scheduler: {
+            ...(prev.scheduler || scheduler),
+            enabled: nextEnabled,
+            isRunning: nextEnabled,
+          },
+        }));
+      }
       setStatusMessage(`Background worker ${nextEnabled ? 'enabled' : 'paused'}.`);
     } catch (err: any) {
       setStatusMessage(`Toggle failed: ${err.message}`);
@@ -115,6 +130,10 @@ export const BackgroundSchedulerHUD: React.FC<BackgroundSchedulerHUDProps> = ({
 
   // Simulate Offline Scenario
   const handleSimulateOffline = async () => {
+    if (authoritativeRuntime) {
+      setStatusMessage('Offline scenario simulation is disabled in authoritative HOS runtime.');
+      return;
+    }
     setIsOfflineSimLoading(true);
     setStatusMessage('Simulating offline night transition (Plan at 9PM -> Sleep -> Wake at ' + simulatedWakeTime + ')...');
     try {
@@ -134,13 +153,18 @@ export const BackgroundSchedulerHUD: React.FC<BackgroundSchedulerHUDProps> = ({
 
   const handleMarkRead = async (notifId: string) => {
     try {
-      await defaultApiClient.markNotificationRead(notifId);
-      onUpdateState(prev => ({
-        ...prev,
-        notifications: (prev.notifications || []).map(n =>
-          n.id === notifId ? { ...n, read: true } : n
-        ),
-      }));
+      if (authoritativeRuntime) {
+        const res = await authoritativeRuntimeClient.markNotificationRead(notifId);
+        if (res.state) onUpdateState(() => res.state);
+      } else {
+        await defaultApiClient.markNotificationRead(notifId);
+        onUpdateState(prev => ({
+          ...prev,
+          notifications: (prev.notifications || []).map(n =>
+            n.id === notifId ? { ...n, read: true } : n
+          ),
+        }));
+      }
     } catch (err) {
       console.error(err);
     }

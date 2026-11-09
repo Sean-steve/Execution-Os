@@ -36,27 +36,38 @@ export const CommandCenterView: React.FC<CommandCenterViewProps> = ({
   const handleSaveCommand = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const draft: AppState = {
-      ...state,
-      victoryQuestionAnswer: victoryAnswer,
-      tomorrowPlan: {
-        ...state.tomorrowPlan,
-        top3: [top1, top2, top3],
-      },
-    };
+    let workingState = state;
+    const progress = await defaultApplicationService.execute({
+      type: 'RecordExecutionProgress',
+      payload: { victoryQuestionAnswer: victoryAnswer },
+    }, workingState);
+    if (!progress.success || !progress.state) return;
+    workingState = progress.state;
 
-    const result = await defaultApplicationService.completeActivity({
-      taskId: 'task-command-center',
-      executionStatus: 'ON_TIME',
-    }, draft);
+    const planned = await defaultApplicationService.planTomorrow({
+      ...workingState.tomorrowPlan,
+      definitionOfVictory: victoryAnswer,
+      top3: [top1, top2, top3],
+      lastPlannedAt: new Date().toISOString(),
+    }, workingState);
+    if (!planned.success || !planned.state) return;
+    workingState = planned.state;
 
-    if (result.success && result.state) {
-      sound.playChime('success');
-      try { confetti({ particleCount: 35, spread: 60, origin: { y: 0.5 } }); } catch {}
-      onUpdateState(() => result.state!);
-      setSavedSuccess(true);
-      setTimeout(() => setSavedSuccess(false), 3000);
+    const task = workingState.tasks.find(item => item.id === 'task-command-center');
+    if (task && !task.completed) {
+      const completed = await defaultApplicationService.completeActivity({
+        taskId: task.id,
+        executionStatus: 'ON_TIME',
+      }, workingState);
+      if (!completed.success || !completed.state) return;
+      workingState = completed.state;
     }
+
+    sound.playChime('success');
+    try { confetti({ particleCount: 35, spread: 60, origin: { y: 0.5 } }); } catch {}
+    onUpdateState(() => workingState);
+    setSavedSuccess(true);
+    setTimeout(() => setSavedSuccess(false), 3000);
   };
 
   return (

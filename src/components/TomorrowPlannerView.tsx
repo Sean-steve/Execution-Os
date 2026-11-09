@@ -35,11 +35,8 @@ import {
   DayActivationResult,
   LateWakeRecoveryResult
 } from '../types';
-import {
-  evaluateTomorrowFeasibility,
-  activateTomorrowIntent,
-  executeLateWakeRecovery
-} from '../services/tomorrowPlanningEngine';
+import { evaluateTomorrowFeasibility } from '../services/tomorrowPlanningEngine';
+import { defaultApplicationService } from '../services/executionApplicationService';
 import { formatMinutesTo12Hour, parseTimeToMinutes } from '../clock';
 import { sound } from '../services/soundService';
 import confetti from 'canvas-confetti';
@@ -267,58 +264,80 @@ export const TomorrowPlannerView: React.FC<TomorrowPlannerViewProps> = ({
   };
 
   // Save Blueprint Action
-  const handleSaveBlueprint = () => {
-    sound.playChime('success');
-    onUpdateState(prev => ({
-      ...prev,
-      tomorrowPlan: {
-        ...currentPlan,
-        lastPlannedAt: new Date().toISOString(),
-        lastFeasibilityResult: feasibility,
-      },
-    }));
+  const handleSaveBlueprint = async () => {
+    const result = await defaultApplicationService.planTomorrow({
+      ...currentPlan,
+      lastPlannedAt: new Date().toISOString(),
+      lastFeasibilityResult: feasibility,
+    }, state);
 
-    setBannerMessage({
-      type: 'SUCCESS',
-      text: `Tomorrow's Blueprint saved and validated! Feasibility score: ${feasibility.feasibilityScore}/100 (${feasibility.predictedMode} Mode).`,
-    });
+    if (result.success && result.state) {
+      sound.playChime('success');
+      onUpdateState(() => result.state!);
+      setBannerMessage({
+        type: 'SUCCESS',
+        text: `Tomorrow's Blueprint saved through the governed runtime. Feasibility score: ${feasibility.feasibilityScore}/100 (${feasibility.predictedMode} Mode).`,
+      });
+    } else {
+      setBannerMessage({ type: 'ERROR', text: result.error || 'Unable to save tomorrow blueprint.' });
+    }
     setTimeout(() => setBannerMessage(null), 5000);
   };
 
   // Autonomous Day Activation Action
-  const handleActivateDay = () => {
-    sound.playChime('success');
-    try {
-      confetti({ particleCount: 60, spread: 80, origin: { y: 0.4 } });
-    } catch {
-      // ignore
+  const handleActivateDay = async () => {
+    const planned = await defaultApplicationService.planTomorrow({
+      ...currentPlan,
+      lastPlannedAt: new Date().toISOString(),
+      lastFeasibilityResult: feasibility,
+    }, state);
+    if (!planned.success || !planned.state) {
+      setBannerMessage({ type: 'ERROR', text: planned.error || 'Unable to save the plan before activation.' });
+      return;
     }
 
-    const { state: nextState, result } = activateTomorrowIntent(state, currentPlan);
-    onUpdateState(() => nextState);
-    setActivationResult(result);
+    const activated = await defaultApplicationService.activateDay({}, planned.state);
+    if (!activated.success || !activated.state) {
+      setBannerMessage({ type: 'ERROR', text: activated.error || 'Unable to activate the governed day.' });
+      return;
+    }
+
+    sound.playChime('success');
+    try { confetti({ particleCount: 60, spread: 80, origin: { y: 0.4 } }); } catch {}
+    onUpdateState(() => activated.state!);
+    setActivationResult(null);
     setRecoveryResult(null);
     setBannerMessage({
       type: 'SUCCESS',
-      text: `Autonomous Day Activated! ${result.instantiatedTasksCount} tasks scheduled. Current Mode: ${result.activatedMode}. Next: ${result.nextAction.phaseTitle}.`,
+      text: 'Day activation completed through the authoritative execution runtime.',
     });
   };
 
-  // Simulate Late Wake Recovery (+30m, +60m, +90m)
-  const handleSimulateLateWake = (offsetMinutes: number) => {
+  // Simulate Late Wake Recovery (+30m, +60m, +90m) through the same governed command path.
+  const handleSimulateLateWake = async (offsetMinutes: number) => {
     const plannedWakeMins = currentPlan.desiredWakeMinutes || 330;
     const simulatedActualWake = plannedWakeMins + offsetMinutes;
 
     sound.playChime('warning');
-    const { state: nextState, result } = executeLateWakeRecovery(state, simulatedActualWake);
-    onUpdateState(() => nextState);
-    setRecoveryResult(result);
-    setActivationResult(null);
+    const result = await defaultApplicationService.execute({
+      type: 'LateWakeRecovery',
+      payload: {
+        actualWakeMinutes: simulatedActualWake,
+        reason: `Planner recovery simulation (+${offsetMinutes}m)`,
+      },
+    }, state);
 
-    setBannerMessage({
-      type: 'INFO',
-      text: `Late Wake Recovery simulated (+${offsetMinutes}m drift). Routine state shifted to ${result.compressedRoutineState}. ${result.fallbacksApplied.length} morning anchors compressed.`,
-    });
+    if (result.success && result.state) {
+      onUpdateState(() => result.state!);
+      setRecoveryResult(null);
+      setActivationResult(null);
+      setBannerMessage({
+        type: 'INFO',
+        text: `Late Wake Recovery evaluated through the governed runtime (+${offsetMinutes}m). Routine state: ${result.state.routineState}.`,
+      });
+    } else {
+      setBannerMessage({ type: 'ERROR', text: result.error || 'Late wake recovery evaluation failed.' });
+    }
   };
 
   return (

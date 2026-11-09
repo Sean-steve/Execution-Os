@@ -19,7 +19,6 @@ import { evaluateTomorrowFeasibility } from '../services/tomorrowPlanningEngine'
 import { sound } from '../services/soundService';
 import confetti from 'canvas-confetti';
 import { defaultApplicationService } from '../services/executionApplicationService';
-import { upsertDailyPerformanceRecord, reconcileWeeklyPerformance, generateWeeklyAdaptationRecommendations } from '../services/weeklyPerformanceIntelligence';
 
 interface EveningReviewViewProps {
   state: AppState;
@@ -74,32 +73,17 @@ export const EveningReviewView: React.FC<EveningReviewViewProps> = ({
     };
     updatedTomorrowPlan.lastFeasibilityResult = evaluateTomorrowFeasibility(updatedTomorrowPlan, state);
 
-    const pillarsMap: Record<PillarKey, boolean> = {
-      morning: false,
-      body: false,
-      mission: false,
-      business: false,
-      wealthTrading: false,
-      family: false,
-      eveningShutdown: true,
-    };
-    pillarsResult.pillars.forEach(p => { pillarsMap[p.key] = p.satisfied; });
+    let workingState = state;
+    const planned = await defaultApplicationService.planTomorrow(updatedTomorrowPlan, workingState);
+    if (!planned.success || !planned.state) return;
+    workingState = planned.state;
 
-    const newHistoryRecord: DayHistoryRecord = {
-      date: review.date,
-      score: pillarsResult.score,
-      mode: state.currentMode,
-      dayType: state.dayType,
-      pillars: pillarsMap,
-      topVictory: accomplished.slice(0, 80) || state.victoryQuestionAnswer,
-    };
-
-    let workingState: AppState = {
-      ...state,
-      dailyReview: review,
-      tomorrowPlan: updatedTomorrowPlan,
-      history: [newHistoryRecord, ...state.history.filter(h => h.date !== review.date)],
-    };
+    const reviewed = await defaultApplicationService.execute({
+      type: 'RecordDailyReview',
+      payload: { review },
+    }, workingState);
+    if (!reviewed.success || !reviewed.state) return;
+    workingState = reviewed.state;
 
     for (const taskId of ['task-daily-analysis', 'task-tomorrow-plan']) {
       const task = workingState.tasks.find(t => t.id === taskId);
@@ -107,13 +91,6 @@ export const EveningReviewView: React.FC<EveningReviewViewProps> = ({
       const result = await defaultApplicationService.completeActivity({ taskId, executionStatus: 'ON_TIME' }, workingState);
       if (result.success && result.state) workingState = result.state;
     }
-
-    workingState = upsertDailyPerformanceRecord(workingState, review.date);
-    workingState = reconcileWeeklyPerformance(workingState, review.date);
-    workingState = {
-      ...workingState,
-      weeklyAdaptationRecommendations: generateWeeklyAdaptationRecommendations(workingState),
-    };
 
     sound.playChime('success');
     try { confetti({ particleCount: 50, spread: 70, origin: { y: 0.5 } }); } catch {}

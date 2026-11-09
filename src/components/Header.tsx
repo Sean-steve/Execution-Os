@@ -31,6 +31,7 @@ import { sound } from '../services/soundService';
 import { AccessibleConfirmModal } from './ui/AccessibleConfirmModal';
 import { RealityChangeModal } from './ui/RealityChangeModal';
 import { defaultApplicationService } from '../services/executionApplicationService';
+import { authoritativeRuntimeClient } from '../services/authoritativeRuntimeClient';
 
 interface HeaderProps {
   state: AppState;
@@ -71,6 +72,7 @@ export const Header: React.FC<HeaderProps> = ({
   }, []);
 
   const currentMinutes = getCurrentTimeMinutes(state);
+  const authoritativeRuntime = authoritativeRuntimeClient.prefersAuthoritativeRuntime();
   const currentTimeDisplay = state.isSimulatedTime 
     ? `${formatMinutesToTime(currentMinutes)} (Sim)`
     : liveTimeString || formatMinutesToTime(currentMinutes);
@@ -230,13 +232,16 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Time Display & Simulation Trigger */}
           <button
             id="time-travel-btn"
-            onClick={() => setShowTimeTravelModal(!showTimeTravelModal)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-mono transition-all shadow-xs ${
+            disabled={authoritativeRuntime}
+            onClick={() => {
+              if (!authoritativeRuntime) setShowTimeTravelModal(!showTimeTravelModal);
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-mono transition-all shadow-xs disabled:opacity-60 disabled:cursor-not-allowed ${
               state.isSimulatedTime
                 ? 'bg-amber-50 border-amber-300 text-amber-800 font-bold'
                 : 'bg-white border-slate-200 text-slate-800 hover:border-slate-300'
             }`}
-            title="Click to simulate clock time"
+            title={authoritativeRuntime ? 'Time simulation is disabled in authoritative HOS runtime' : 'Click to simulate clock time'}
           >
             <Clock className={`w-3.5 h-3.5 ${activeTheme.classes.accentText}`} />
             <span>{currentTimeDisplay}</span>
@@ -312,7 +317,7 @@ export const Header: React.FC<HeaderProps> = ({
       )}
 
       {/* Time Simulator Drawer */}
-      {showTimeTravelModal && (
+      {showTimeTravelModal && !authoritativeRuntime && (
         <div className="bg-slate-50 border-b border-slate-200 px-4 py-4 text-xs animate-in slide-in-from-top duration-150 shadow-inner space-y-3">
           <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-slate-700">

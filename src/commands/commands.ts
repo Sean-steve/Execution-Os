@@ -27,11 +27,15 @@ import {
   RetainAdaptationProposalPayload,
   RejectAdaptationProposalPayload,
   EvaluateAdaptationMeasurementPayload,
+  ScanAdaptationsPayload,
   AcceptDisciplinePenaltyPayload,
   RecordTradingProtocolPayload,
   RecordCompanyOfTheDayPayload,
   RecordDailyReviewPayload,
   RecordIdentityStatusPayload,
+  RecordExecutionProgressPayload,
+  SetStrictTimeEnforcementPayload,
+  CreateRewardPayload,
   LateWakeRecoveryPayload,
   CreatePerformanceSessionPayload,
   PreparePerformanceSessionPayload,
@@ -418,6 +422,17 @@ export class EvaluateAdaptationMeasurementCommand implements ICommand {
   }
 }
 
+export class ScanAdaptationsCommand implements ICommand {
+  readonly type = 'ScanAdaptations';
+  constructor(public payload: ScanAdaptationsPayload) {}
+
+  validate() {
+    return ['7d','30d','60d','90d'].includes(this.payload.window)
+      ? { valid: true }
+      : { valid: false, error: 'window must be one of 7d, 30d, 60d, 90d.' };
+  }
+}
+
 export class AcceptDisciplinePenaltyCommand implements ICommand {
   readonly type = 'AcceptDisciplinePenalty';
   constructor(public payload: AcceptDisciplinePenaltyPayload) {}
@@ -462,6 +477,54 @@ export class RecordIdentityStatusCommand implements ICommand {
   constructor(public payload: RecordIdentityStatusPayload) {}
 
   validate() {
+    return { valid: true };
+  }
+}
+
+export class SetStrictTimeEnforcementCommand implements ICommand {
+  readonly type = 'SetStrictTimeEnforcement';
+  constructor(public payload: SetStrictTimeEnforcementPayload) {}
+
+  validate() {
+    return typeof this.payload.enabled === 'boolean'
+      ? { valid: true }
+      : { valid: false, error: 'enabled must be boolean.' };
+  }
+}
+
+export class CreateRewardCommand implements ICommand {
+  readonly type = 'CreateReward';
+  constructor(public payload: CreateRewardPayload) {}
+
+  validate() {
+    const reward = this.payload.reward;
+    if (!reward?.id || !reward.title?.trim() || !Number.isFinite(reward.pointsRequired) || reward.pointsRequired < 1) {
+      return { valid: false, error: 'Reward requires id, title and positive pointsRequired.' };
+    }
+    return { valid: true };
+  }
+}
+
+export class RecordExecutionProgressCommand implements ICommand {
+  readonly type = 'RecordExecutionProgress';
+  constructor(public payload: RecordExecutionProgressPayload) {}
+
+  validate() {
+    const numeric = [
+      this.payload.morningWorkoutSetsDone,
+      this.payload.afternoonWorkoutSetsDone,
+      this.payload.morningOutdoorMinutes,
+      this.payload.meditationMinutes,
+    ].filter(value => value !== undefined);
+    if (numeric.some(value => typeof value !== 'number' || !Number.isFinite(value) || value < 0)) {
+      return { valid: false, error: 'Execution progress counters must be finite non-negative numbers.' };
+    }
+    if (this.payload.dreamEntry) {
+      const entry = this.payload.dreamEntry;
+      if (!entry.id || !entry.title?.trim() || !entry.content?.trim()) {
+        return { valid: false, error: 'Dream entry requires id, title and content.' };
+      }
+    }
     return { valid: true };
   }
 }

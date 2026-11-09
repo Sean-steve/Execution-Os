@@ -41,6 +41,7 @@ import {
   getHistoricalDataForWindow
 } from '../services/adaptationEngine';
 import { getActiveDayTheme } from '../services/dayThemeService';
+import { defaultApplicationService } from '../services/executionApplicationService';
 import { sound } from '../services/soundService';
 
 interface AdaptationProposalsViewProps {
@@ -77,61 +78,71 @@ export const AdaptationProposalsView: React.FC<AdaptationProposalsViewProps> = (
   const activeProposals = proposals.filter(p => p.status === 'APPLIED' || p.status === 'ACTIVE_MEASURING' || p.status === 'MEASURING');
   const pastProposals = proposals.filter(p => p.status === 'RETAINED' || p.status === 'ROLLED_BACK' || p.status === 'REJECTED');
 
-  const handleWindowChange = (win: LongitudinalWindow) => {
-    setSelectedWindow(win);
-    onUpdateState(prev => {
-      const scanResult = scanLongitudinalAdaptations(prev, win);
-      return {
-        ...prev,
-        longitudinalWindow: win,
-        adaptationPatterns: scanResult.patterns,
-        adaptationProposals: scanResult.proposals
-      };
-    });
+  const runAuthoritativeScan = async (win: LongitudinalWindow) => {
+    const result = await defaultApplicationService.execute({
+      type: 'ScanAdaptations',
+      payload: { window: win },
+    }, state);
+    if (result.success && result.state) {
+      onUpdateState(() => result.state!);
+      return true;
+    }
+    return false;
   };
 
-  const handleScan = () => {
+  const handleWindowChange = async (win: LongitudinalWindow) => {
+    setSelectedWindow(win);
+    setIsScanning(true);
+    const success = await runAuthoritativeScan(win);
+    setIsScanning(false);
+    if (success) sound.playChime('success');
+  };
+
+  const handleScan = async () => {
     setIsScanning(true);
     sound.playChime('bell');
-    setTimeout(() => {
-      onUpdateState(prev => {
-        const scanResult = scanLongitudinalAdaptations(prev, selectedWindow);
-        return {
-          ...prev,
-          longitudinalWindow: selectedWindow,
-          adaptationPatterns: scanResult.patterns,
-          adaptationProposals: scanResult.proposals
-        };
-      });
-      setIsScanning(false);
+    const success = await runAuthoritativeScan(selectedWindow);
+    setIsScanning(false);
+    if (success) sound.playChime('success');
+  };
+
+  const handleApprove = async (proposalId: string) => {
+    const result = await defaultApplicationService.applyAdaptationProposal(proposalId, state);
+    if (result.success && result.state) {
       sound.playChime('success');
-    }, 400);
+      onUpdateState(() => result.state!);
+    }
   };
 
-  const handleApprove = (proposalId: string) => {
-    sound.playChime('success');
-    onUpdateState(prev => applyAdaptationProposal(prev, proposalId, 'USER'));
+  const handleReject = async (proposalId: string) => {
+    const result = await defaultApplicationService.rejectAdaptationProposal(proposalId, state);
+    if (result.success && result.state) onUpdateState(() => result.state!);
   };
 
-  const handleReject = (proposalId: string) => {
-    onUpdateState(prev => rejectAdaptationProposal(prev, proposalId));
+  const handleMeasure = async (proposalId: string) => {
+    const result = await defaultApplicationService.evaluateAdaptationMeasurement(proposalId, state);
+    if (result.success && result.state) {
+      sound.playChime('bell');
+      onUpdateState(() => result.state!);
+    }
   };
 
-  const handleMeasure = (proposalId: string) => {
-    sound.playChime('bell');
-    onUpdateState(prev => measureAdaptationPerformance(prev, proposalId));
+  const handleRetain = async (proposalId: string) => {
+    const result = await defaultApplicationService.retainAdaptationProposal(proposalId, state);
+    if (result.success && result.state) {
+      sound.playChime('success');
+      onUpdateState(() => result.state!);
+    }
   };
 
-  const handleRetain = (proposalId: string) => {
-    sound.playChime('success');
-    onUpdateState(prev => retainAdaptationProposal(prev, proposalId, 'USER'));
-  };
-
-  const handleRollback = (proposalId: string) => {
+  const handleRollback = async (proposalId: string) => {
     const reason = rollbackReason[proposalId] || 'Reverted by human operator due to sub-optimal execution drift';
-    sound.playChime('warning');
-    onUpdateState(prev => rollbackAdaptationProposal(prev, proposalId, reason, 'USER'));
-    setShowRollbackPrompt(null);
+    const result = await defaultApplicationService.rollbackAdaptationProposal(proposalId, reason, state);
+    if (result.success && result.state) {
+      sound.playChime('warning');
+      onUpdateState(() => result.state!);
+      setShowRollbackPrompt(null);
+    }
   };
 
   const windowLabels: { id: LongitudinalWindow; label: string; days: number }[] = [

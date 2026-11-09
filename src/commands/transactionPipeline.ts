@@ -29,11 +29,15 @@ import {
   RetainAdaptationProposalCommand,
   RejectAdaptationProposalCommand,
   EvaluateAdaptationMeasurementCommand,
+  ScanAdaptationsCommand,
   AcceptDisciplinePenaltyCommand,
   RecordTradingProtocolCommand,
   RecordCompanyOfTheDayCommand,
   RecordDailyReviewCommand,
   RecordIdentityStatusCommand,
+  RecordExecutionProgressCommand,
+  SetStrictTimeEnforcementCommand,
+  CreateRewardCommand,
   LateWakeRecoveryCommand,
   CreatePerformanceSessionCommand,
   PreparePerformanceSessionCommand,
@@ -62,7 +66,7 @@ import { getAutonomousNextDecision } from '../services/decisionEngine';
 import { checkTaskDependencies } from '../services/dependencyEngine';
 import { selectOptimalFallbackTier } from '../services/fallbackEngine';
 import { createSystemEvent } from '../services/eventBus';
-import { PENALTY_POINTS_MISSED_WINDOW } from '../services/storageService';
+import { PENALTY_POINTS_MISSED_WINDOW, calculate7Pillars } from '../services/storageService';
 import { defaultDurableEventStore } from '../services/durableEventStore';
 import { defaultEventDispatcher } from '../services/eventDispatcher';
 import {
@@ -75,9 +79,11 @@ import {
   rollbackAdaptationProposal,
   retainAdaptationProposal,
   rejectAdaptationProposal,
-  measureAdaptationPerformance
+  measureAdaptationPerformance,
+  scanLongitudinalAdaptations
 } from '../services/adaptationEngine';
 import { upsertDailyPerformanceRecord, reconcileWeeklyPerformance, generateWeeklyAdaptationRecommendations } from '../services/weeklyPerformanceIntelligence';
+import { replenishRewardsCatalog } from '../services/rewardCatalogService';
 import { reconcileAllocationPlanWithAuthority, requestSingleActivityScheduleChange, acceptHOSDailyOperatingPlan, resolveHOSScheduleProposal } from '../services/scheduleAuthority';
 import { applyLegacyTradingProtocolUpdate } from '../adapters/legacyTradingCompatibilityAdapter';
 import { upsertExternalExecutionGate } from '../services/externalExecutionGate';
@@ -727,6 +733,24 @@ export class TransactionPipeline {
           const evt = createSystemEvent('AdaptationMeasured', prop.id, prop, state, 'SYSTEM_KERNEL', undefined, clock);
           createdEvents.push(evt);
         }
+      } else if (command instanceof ScanAdaptationsCommand) {
+        const scan = scanLongitudinalAdaptations(state, command.payload.window);
+        state.longitudinalWindow = command.payload.window;
+        state.adaptationPatterns = scan.patterns;
+        state.adaptationProposals = scan.proposals;
+        createdEvents.push(createSystemEvent(
+          'AdaptationPatternDetected',
+          `adaptation-scan-${command.payload.window}`,
+          {
+            window: command.payload.window,
+            patternCount: scan.patterns.length,
+            proposalCount: scan.proposals.length,
+          },
+          state,
+          'SYSTEM_KERNEL',
+          undefined,
+          clock
+        ));
       } else if (command instanceof AcceptDisciplinePenaltyCommand) {
         const taskId = command.payload.taskId;
         const penalty = command.payload.penaltyPoints || PENALTY_POINTS_MISSED_WINDOW;
@@ -771,6 +795,20 @@ export class TransactionPipeline {
           ...command.payload.review,
         };
         const reviewDate = state.dailyReview.date || state.activeDate || clock.toISOString().slice(0, 10);
+        const pillarResult = calculate7Pillars(state);
+        const pillarMap: any = {};
+        for (const pillar of pillarResult.pillars) pillarMap[pillar.key] = pillar.satisfied;
+        state.history = [
+          {
+            date: reviewDate,
+            score: pillarResult.score,
+            mode: state.currentMode,
+            dayType: state.dayType,
+            pillars: pillarMap,
+            topVictory: state.dailyReview.accomplished?.slice(0, 80) || state.victoryQuestionAnswer,
+          },
+          ...(state.history || []).filter(entry => entry.date !== reviewDate),
+        ];
         state = upsertDailyPerformanceRecord(state, reviewDate);
         state = reconcileWeeklyPerformance(state, reviewDate);
         state.weeklyAdaptationRecommendations = generateWeeklyAdaptationRecommendations(state);
@@ -805,11 +843,11 @@ export class TransactionPipeline {
           throw new Error('Insufficient reward points.');
         }
         state.rewardPoints = Math.max(0, state.rewardPoints - reward.pointsRequired);
-        state.rewards = state.rewards.map(r =>
+        state.rewards = replenishRewardsCatalog(state.rewards.map(r =>
           r.id === reward.id
             ? { ...r, unlocked: true, redeemed: true, redeemedAt: clock.toISOString() }
             : r
-        );
+        ));
         const evt = createSystemEvent('RewardRedeemed', reward.id, {
           rewardId: reward.id,
           pointsSpent: reward.pointsRequired,
@@ -820,6 +858,70 @@ export class TransactionPipeline {
           ...state.identityStatus,
           ...command.payload.identity,
         };
+      } else if (command instanceof RecordExecutionProgressCommand) {
+        if (command.payload.victoryQuestionAnswer !== undefined) {
+          state.victoryQuestionAnswer = command.payload.victoryQuestionAnswer;
+        }
+        if (command.payload.dreamEntry) {
+          state.dreamEntries = [
+            command.payload.dreamEntry,
+            ...(state.dreamEntries || []).filter(entry => entry.id !== command.payload.dreamEntry!.id),
+          ].slice(0, 500);
+        }
+        if (command.payload.morningWorkoutSetsDone !== undefined) {
+          state.morningWorkoutSetsDone = Math.max(0, Math.round(command.payload.morningWorkoutSetsDone));
+        }
+        if (command.payload.afternoonWorkoutSetsDone !== undefined) {
+          state.afternoonWorkoutSetsDone = Math.max(0, Math.round(command.payload.afternoonWorkoutSetsDone));
+        }
+        if (command.payload.morningOutdoorMinutes !== undefined) {
+          state.morningOutdoorMinutes = Math.max(0, Math.round(command.payload.morningOutdoorMinutes));
+        }
+        if (command.payload.meditationMinutes !== undefined) {
+          state.meditationMinutes = Math.max(0, Math.round(command.payload.meditationMinutes));
+        }
+        createdEvents.push(createSystemEvent(
+          'ExecutionProgressRecorded',
+          state.activeDate || 'current-day',
+          {
+            victoryQuestionUpdated: command.payload.victoryQuestionAnswer !== undefined,
+            dreamEntryId: command.payload.dreamEntry?.id,
+            morningWorkoutSetsDone: command.payload.morningWorkoutSetsDone,
+            afternoonWorkoutSetsDone: command.payload.afternoonWorkoutSetsDone,
+            morningOutdoorMinutes: command.payload.morningOutdoorMinutes,
+            meditationMinutes: command.payload.meditationMinutes,
+          },
+          state,
+          'USER',
+          undefined,
+          clock
+        ));
+      } else if (command instanceof SetStrictTimeEnforcementCommand) {
+        state.strictTimeEnforcement = command.payload.enabled;
+        createdEvents.push(createSystemEvent(
+          'RoutineChanged',
+          'strict-time-enforcement',
+          { strictTimeEnforcement: state.strictTimeEnforcement },
+          state,
+          'GOVERNANCE_GUARD',
+          undefined,
+          clock
+        ));
+      } else if (command instanceof CreateRewardCommand) {
+        const reward = command.payload.reward;
+        state.rewards = [
+          ...(state.rewards || []).filter(existing => existing.id !== reward.id),
+          reward,
+        ];
+        createdEvents.push(createSystemEvent(
+          'PointsAwarded',
+          reward.id,
+          { action: 'REWARD_CREATED', rewardId: reward.id, pointsRequired: reward.pointsRequired },
+          state,
+          'USER',
+          undefined,
+          clock
+        ));
       } else if (command instanceof CreatePerformanceSessionCommand) {
         const session = performanceEngine.createSession(state, command.payload.activityInstanceId, {
           environmentType: command.payload.environmentType,

@@ -4,6 +4,7 @@ import { IClock } from '../clock';
 import { authMiddleware } from './auth';
 import { createHeeRouter } from './routes/heeRouter';
 import { createHOSRouter } from './routes/hosRouter';
+import { createClientRouter } from './routes/clientRouter';
 import { IHOSRepositoryFactory, HOSSubjectScopedRepositoryFactory } from '../hos/repositoryFactory';
 import { HOSEventMeshBridge, defaultHOSEventMeshBridge } from '../hos/eventMesh';
 import { HOSEngineLifecycleRegistry, defaultHOSEngineLifecycleRegistry } from '../hos/lifecycle';
@@ -90,6 +91,14 @@ export function createApp(options: AppOptions = {}): Express {
     hosRuntime
   );
   app.use('/api/v1/hos', hosRouter);
+
+  const clientRouter = createClientRouter(
+    hosRepositories,
+    options.hosEventMesh || defaultHOSEventMeshBridge,
+    hosBoundaryStore,
+    hosRuntime
+  );
+  app.use('/api/v1/client', clientRouter);
 
   const heeRouter = createHeeRouter(repository, options.clock);
   app.use('/api/v1/hee', heeRouter);

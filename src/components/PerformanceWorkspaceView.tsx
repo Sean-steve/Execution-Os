@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import { CANONICAL_PERFORMANCE_PROTOCOLS } from '../data/performanceProtocols';
 import { defaultApiClient } from '../services/apiClient';
+import { authoritativeRuntimeClient } from '../services/authoritativeRuntimeClient';
 
 interface PerformanceWorkspaceViewProps {
   state: AppState;
@@ -174,7 +175,9 @@ export const PerformanceWorkspaceView: React.FC<PerformanceWorkspaceViewProps> =
     setAiChatInput('');
 
     try {
-      const response = await defaultApiClient.sendPerformanceAiMessage(currentSession.id, userMsg, aiMode);
+      const response = authoritativeRuntimeClient.prefersAuthoritativeRuntime()
+        ? await authoritativeRuntimeClient.sendPerformanceAiMessage(currentSession.id, userMsg, aiMode)
+        : await defaultApiClient.sendPerformanceAiMessage(currentSession.id, userMsg, aiMode);
       const data = response.data;
       setAiChatMessages(prev => [
         ...prev,
