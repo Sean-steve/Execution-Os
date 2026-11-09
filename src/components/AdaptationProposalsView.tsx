@@ -78,35 +78,32 @@ export const AdaptationProposalsView: React.FC<AdaptationProposalsViewProps> = (
   const activeProposals = proposals.filter(p => p.status === 'APPLIED' || p.status === 'ACTIVE_MEASURING' || p.status === 'MEASURING');
   const pastProposals = proposals.filter(p => p.status === 'RETAINED' || p.status === 'ROLLED_BACK' || p.status === 'REJECTED');
 
-  const handleWindowChange = (win: LongitudinalWindow) => {
-    setSelectedWindow(win);
-    onUpdateState(prev => {
-      const scanResult = scanLongitudinalAdaptations(prev, win);
-      return {
-        ...prev,
-        longitudinalWindow: win,
-        adaptationPatterns: scanResult.patterns,
-        adaptationProposals: scanResult.proposals
-      };
-    });
+  const runAuthoritativeScan = async (win: LongitudinalWindow) => {
+    const result = await defaultApplicationService.execute({
+      type: 'ScanAdaptations',
+      payload: { window: win },
+    }, state);
+    if (result.success && result.state) {
+      onUpdateState(() => result.state!);
+      return true;
+    }
+    return false;
   };
 
-  const handleScan = () => {
+  const handleWindowChange = async (win: LongitudinalWindow) => {
+    setSelectedWindow(win);
+    setIsScanning(true);
+    const success = await runAuthoritativeScan(win);
+    setIsScanning(false);
+    if (success) sound.playChime('success');
+  };
+
+  const handleScan = async () => {
     setIsScanning(true);
     sound.playChime('bell');
-    setTimeout(() => {
-      onUpdateState(prev => {
-        const scanResult = scanLongitudinalAdaptations(prev, selectedWindow);
-        return {
-          ...prev,
-          longitudinalWindow: selectedWindow,
-          adaptationPatterns: scanResult.patterns,
-          adaptationProposals: scanResult.proposals
-        };
-      });
-      setIsScanning(false);
-      sound.playChime('success');
-    }, 400);
+    const success = await runAuthoritativeScan(selectedWindow);
+    setIsScanning(false);
+    if (success) sound.playChime('success');
   };
 
   const handleApprove = async (proposalId: string) => {
