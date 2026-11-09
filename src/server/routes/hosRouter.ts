@@ -18,6 +18,7 @@ import { HOSCapabilityService } from '../../hos/capabilityService';
 import { ApiError, AuthenticationError, ValidationError } from '../errors';
 import { IHOSBoundaryStore, MemoryHOSBoundaryStore } from '../../hos/boundaryStore';
 import { getHOSReadinessSnapshot } from '../../hos/productionHardening';
+import { HOSSubjectRuntimeRegistry } from '../../hos/runtimeRegistry';
 
 function stableFingerprint(value: any): string {
   const normalize = (input: any): any => {
@@ -44,7 +45,8 @@ export function createHOSRouter(
   repositories: IHOSRepositoryFactory = new HOSSubjectScopedRepositoryFactory(),
   eventMesh: HOSEventMeshBridge = defaultHOSEventMeshBridge,
   lifecycle: HOSEngineLifecycleRegistry = defaultHOSEngineLifecycleRegistry,
-  boundaryStore: IHOSBoundaryStore = new MemoryHOSBoundaryStore()
+  boundaryStore: IHOSBoundaryStore = new MemoryHOSBoundaryStore(),
+  runtime?: HOSSubjectRuntimeRegistry
 ): Router {
   const router = Router();
   const capabilities = new HOSCapabilityService(repositories, eventMesh, lifecycle, boundaryStore);
@@ -98,7 +100,24 @@ export function createHOSRouter(
     }
   });
 
-  router.post('/lifecycle', (req, res, next) => {
+  router.get('/runtime', (req, res, next) => {
+    try {
+      const subject = subjectFrom(req);
+      res.status(200).json({
+        success: true,
+        data: runtime?.status(subject) || {
+          subjectId: subject.subjectId,
+          tenantId: subject.tenantId,
+          lifecycle: lifecycle.get(subject).state,
+          workerActive: false,
+        },
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post('/lifecycle', async (req, res, next) => {
     try {
       const subject = subjectFrom(req);
       HOSIdentityBridge.requirePermission(subject, 'execution.lifecycle.manage');
@@ -112,7 +131,8 @@ export function createHOSRouter(
 
       if (!nextState) throw new ValidationError('Lifecycle action must be ACTIVATE, RESUME, PAUSE, or DEGRADE.');
       const record = lifecycle.set(subject, nextState, req.body?.reason);
-      res.status(200).json({ success: true, data: record });
+      const runtimeStatus = runtime ? await runtime.onLifecycleChange(subject, nextState) : undefined;
+      res.status(200).json({ success: true, data: { ...record, runtime: runtimeStatus } });
     } catch (err) {
       next(err);
     }
@@ -121,6 +141,7 @@ export function createHOSRouter(
   router.post('/signals', async (req, res, next) => {
     try {
       const subject = subjectFrom(req);
+      runtime?.ensureForSubject(subject);
       const type = String(req.body?.type || '');
       const payload = req.body?.data || {};
       const idempotencyKey = String(req.headers['idempotency-key'] || req.headers['x-idempotency-key'] || '');
@@ -236,6 +257,7 @@ export function createHOSRouter(
   router.post('/capabilities/:capability', async (req, res, next) => {
     try {
       const subject = subjectFrom(req);
+      runtime?.ensureForSubject(subject);
       const result = await capabilities.execute(
         req.params.capability,
         req.body || {},
