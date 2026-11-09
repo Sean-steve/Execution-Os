@@ -88,14 +88,23 @@ export const FamilyLifeView: React.FC<FamilyLifeViewProps> = ({
     const current = Math.min(3, state.afternoonWorkoutSetsDone || 0);
     if (current >= 3) return;
     const nextSets = current + 1;
-    let workingState: AppState = { ...state, afternoonWorkoutSetsDone: nextSets };
 
+    const recorded = await defaultApplicationService.execute({
+      type: 'RecordExecutionProgress',
+      payload: { afternoonWorkoutSetsDone: nextSets },
+    }, state);
+    if (!recorded.success || !recorded.state) return;
+
+    let workingState = recorded.state;
     if (nextSets >= 3) {
-      const result = await defaultApplicationService.completeActivity({
-        taskId: 'task-afternoon-workout',
-        executionStatus: 'ON_TIME',
-      }, workingState);
-      if (result.success && result.state) workingState = result.state;
+      const task = workingState.tasks.find(item => item.id === 'task-afternoon-workout');
+      if (task && !task.completed) {
+        const completed = await defaultApplicationService.completeActivity({
+          taskId: task.id,
+          executionStatus: 'ON_TIME',
+        }, workingState);
+        if (completed.success && completed.state) workingState = completed.state;
+      }
     }
     onUpdateState(() => workingState);
   };
