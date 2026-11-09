@@ -15,6 +15,8 @@ export interface TokenClaims {
   iat: number; // Issued at (seconds)
   exp: number; // Expiration (seconds)
   nonce?: string;
+  tokenKind?: 'LEGACY_STANDALONE' | 'HOS_CLIENT';
+  consentScopes?: string[];
 }
 
 export class SecurityEngine {
@@ -121,6 +123,40 @@ export class SecurityEngine {
       .update(`${header}.${payload}`)
       .digest('base64url');
 
+    return `${header}.${payload}.${signature}`;
+  }
+
+  /**
+   * Mints a short-lived client session derived from an already verified HOS subject assertion.
+   * This is delegation, not a new identity authority: the token carries the HOS subject,
+   * tenant, permissions and consent scopes and is only accepted by /api/v1/client/*.
+   */
+  static generateHOSClientSessionToken(input: {
+    subjectId: string;
+    tenantId: string;
+    permissions: string[];
+    consentScopes: string[];
+    durationSeconds?: number;
+  }): string {
+    const durationSeconds = Math.max(60, Math.min(input.durationSeconds ?? 900, 3600));
+    const claims: TokenClaims = {
+      sub: input.subjectId,
+      tenantId: input.tenantId,
+      role: 'OWNER',
+      permissions: [...new Set(input.permissions)],
+      consentScopes: [...new Set(input.consentScopes)],
+      tokenKind: 'HOS_CLIENT',
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + durationSeconds,
+      nonce: crypto.randomBytes(8).toString('hex'),
+    };
+
+    const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'EXECUTION_HOS_CLIENT' })).toString('base64url');
+    const payload = Buffer.from(JSON.stringify(claims)).toString('base64url');
+    const signature = crypto
+      .createHmac('sha256', this.getMasterSecretKey())
+      .update(`${header}.${payload}`)
+      .digest('base64url');
     return `${header}.${payload}.${signature}`;
   }
 
