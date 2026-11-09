@@ -57,6 +57,7 @@ export interface IHOSBoundaryStore {
   setIdempotency(key: string, record: HOSBoundaryIdempotencyRecord): void;
   getLifecycle(key: string): HOSBoundaryLifecycleRecord | undefined;
   setLifecycle(key: string, record: HOSBoundaryLifecycleRecord): void;
+  listLifecycle?(): HOSBoundaryLifecycleRecord[];
   hasProcessedEvent(key: string): boolean;
   markProcessedEvent(key: string): void;
   addEventAudit(record: HOSBoundaryEventAuditRecord): void;
@@ -73,6 +74,7 @@ export class MemoryHOSBoundaryStore implements IHOSBoundaryStore {
   setIdempotency(key: string, record: HOSBoundaryIdempotencyRecord) { this.snapshot.idempotency[key] = JSON.parse(JSON.stringify(record)); }
   getLifecycle(key: string) { return this.snapshot.lifecycle[key]; }
   setLifecycle(key: string, record: HOSBoundaryLifecycleRecord) { this.snapshot.lifecycle[key] = JSON.parse(JSON.stringify(record)); }
+  listLifecycle() { return JSON.parse(JSON.stringify(Object.values(this.snapshot.lifecycle))); }
   hasProcessedEvent(key: string) { return this.snapshot.processedEvents.includes(key); }
   markProcessedEvent(key: string) {
     if (!this.snapshot.processedEvents.includes(key)) this.snapshot.processedEvents.push(key);
