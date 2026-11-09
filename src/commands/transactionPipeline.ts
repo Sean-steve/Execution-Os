@@ -34,6 +34,7 @@ import {
   RecordCompanyOfTheDayCommand,
   RecordDailyReviewCommand,
   RecordIdentityStatusCommand,
+  RecordExecutionProgressCommand,
   LateWakeRecoveryCommand,
   CreatePerformanceSessionCommand,
   PreparePerformanceSessionCommand,
@@ -834,6 +835,44 @@ export class TransactionPipeline {
           ...state.identityStatus,
           ...command.payload.identity,
         };
+      } else if (command instanceof RecordExecutionProgressCommand) {
+        if (command.payload.victoryQuestionAnswer !== undefined) {
+          state.victoryQuestionAnswer = command.payload.victoryQuestionAnswer;
+        }
+        if (command.payload.dreamEntry) {
+          state.dreamEntries = [
+            command.payload.dreamEntry,
+            ...(state.dreamEntries || []).filter(entry => entry.id !== command.payload.dreamEntry!.id),
+          ].slice(0, 500);
+        }
+        if (command.payload.morningWorkoutSetsDone !== undefined) {
+          state.morningWorkoutSetsDone = Math.max(0, Math.round(command.payload.morningWorkoutSetsDone));
+        }
+        if (command.payload.afternoonWorkoutSetsDone !== undefined) {
+          state.afternoonWorkoutSetsDone = Math.max(0, Math.round(command.payload.afternoonWorkoutSetsDone));
+        }
+        if (command.payload.morningOutdoorMinutes !== undefined) {
+          state.morningOutdoorMinutes = Math.max(0, Math.round(command.payload.morningOutdoorMinutes));
+        }
+        if (command.payload.meditationMinutes !== undefined) {
+          state.meditationMinutes = Math.max(0, Math.round(command.payload.meditationMinutes));
+        }
+        createdEvents.push(createSystemEvent(
+          'ExecutionProgressRecorded',
+          state.activeDate || 'current-day',
+          {
+            victoryQuestionUpdated: command.payload.victoryQuestionAnswer !== undefined,
+            dreamEntryId: command.payload.dreamEntry?.id,
+            morningWorkoutSetsDone: command.payload.morningWorkoutSetsDone,
+            afternoonWorkoutSetsDone: command.payload.afternoonWorkoutSetsDone,
+            morningOutdoorMinutes: command.payload.morningOutdoorMinutes,
+            meditationMinutes: command.payload.meditationMinutes,
+          },
+          state,
+          'USER',
+          undefined,
+          clock
+        ));
       } else if (command instanceof CreatePerformanceSessionCommand) {
         const session = performanceEngine.createSession(state, command.payload.activityInstanceId, {
           environmentType: command.payload.environmentType,
