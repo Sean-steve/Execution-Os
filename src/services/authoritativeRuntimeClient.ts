@@ -114,6 +114,44 @@ export class AuthoritativeRuntimeClient {
     return json.state as AppState;
   }
 
+  async getSchedulerStatus() {
+    return this.request('/api/v1/client/scheduler/status');
+  }
+
+  async triggerSchedulerTick(options: { forceDayBoundary?: boolean; targetMinutes?: number } = {}) {
+    return this.request('/api/v1/client/scheduler/tick', {
+      method: 'POST',
+      body: JSON.stringify(options),
+    });
+  }
+
+  async runSchedulerJob(jobType: string) {
+    return this.request('/api/v1/client/scheduler/run-job', {
+      method: 'POST',
+      body: JSON.stringify({ jobType }),
+    });
+  }
+
+  async toggleScheduler(enabled: boolean) {
+    return this.request('/api/v1/client/scheduler/toggle', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    });
+  }
+
+  async markNotificationRead(id: string) {
+    return this.request(`/api/v1/client/notifications/${encodeURIComponent(id)}/read`, {
+      method: 'POST',
+    });
+  }
+
+  async sendPerformanceAiMessage(sessionId: string, message: string, mode: string) {
+    return this.request(`/api/v1/client/performance/sessions/${encodeURIComponent(sessionId)}/ai`, {
+      method: 'POST',
+      body: JSON.stringify({ message, mode }),
+    });
+  }
+
   async executeDescriptor<TData = any>(
     type: string,
     payload: any = {},
