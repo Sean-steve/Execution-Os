@@ -33,6 +33,8 @@ import {
   RecordDailyReviewPayload,
   RecordIdentityStatusPayload,
   RecordExecutionProgressPayload,
+  SetStrictTimeEnforcementPayload,
+  CreateRewardPayload,
   LateWakeRecoveryPayload,
   CreatePerformanceSessionPayload,
   PreparePerformanceSessionPayload,
@@ -463,6 +465,30 @@ export class RecordIdentityStatusCommand implements ICommand {
   constructor(public payload: RecordIdentityStatusPayload) {}
 
   validate() {
+    return { valid: true };
+  }
+}
+
+export class SetStrictTimeEnforcementCommand implements ICommand {
+  readonly type = 'SetStrictTimeEnforcement';
+  constructor(public payload: SetStrictTimeEnforcementPayload) {}
+
+  validate() {
+    return typeof this.payload.enabled === 'boolean'
+      ? { valid: true }
+      : { valid: false, error: 'enabled must be boolean.' };
+  }
+}
+
+export class CreateRewardCommand implements ICommand {
+  readonly type = 'CreateReward';
+  constructor(public payload: CreateRewardPayload) {}
+
+  validate() {
+    const reward = this.payload.reward;
+    if (!reward?.id || !reward.title?.trim() || !Number.isFinite(reward.pointsRequired) || reward.pointsRequired < 1) {
+      return { valid: false, error: 'Reward requires id, title and positive pointsRequired.' };
+    }
     return { valid: true };
   }
 }
