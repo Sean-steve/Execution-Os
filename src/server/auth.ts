@@ -9,7 +9,7 @@ export interface UserContext {
   role: 'OWNER' | 'ADMIN' | 'READONLY';
   permissions: string[];
   tokenClaims?: TokenClaims;
-  identitySource?: 'HOS' | 'LEGACY_STANDALONE' | 'PUBLIC';
+  identitySource?: 'HOS' | 'HOS_CLIENT' | 'LEGACY_STANDALONE' | 'PUBLIC';
   consentScopes?: string[];
 }
 
@@ -62,6 +62,41 @@ export function authMiddleware(req: Request, _res: Response, next: NextFunction)
       consentScopes: [],
     };
     return next();
+  }
+
+
+  if (path.startsWith('/api/v1/client/')) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
+      return next(new AuthenticationError('A delegated HOS client session is required.'));
+    }
+    try {
+      const claims = SecurityEngine.verifySessionToken(authHeader.substring(7).trim());
+      if (claims.tokenKind !== 'HOS_CLIENT') {
+        return next(new AuthenticationError('The supplied token is not an HOS delegated client session.'));
+      }
+      req.hosSubject = {
+        subjectId: claims.sub,
+        hosUserId: claims.sub,
+        tenantId: claims.tenantId,
+        permissions: claims.permissions || [],
+        consentScopes: claims.consentScopes || [],
+        issuer: 'HumanKernelOS',
+        authenticatedAtUtc: new Date().toISOString(),
+      };
+      req.user = {
+        userId: claims.sub,
+        tenantId: claims.tenantId,
+        role: claims.role,
+        permissions: claims.permissions || [],
+        tokenClaims: claims,
+        identitySource: 'HOS_CLIENT',
+        consentScopes: claims.consentScopes || [],
+      };
+      return next();
+    } catch (err: any) {
+      return next(new AuthenticationError(`Delegated HOS client session verification failed: ${err.message}`));
+    }
   }
 
   if (mode === 'HOS') {
