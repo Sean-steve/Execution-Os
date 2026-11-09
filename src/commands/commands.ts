@@ -27,6 +27,7 @@ import {
   RetainAdaptationProposalPayload,
   RejectAdaptationProposalPayload,
   EvaluateAdaptationMeasurementPayload,
+  ScanAdaptationsPayload,
   AcceptDisciplinePenaltyPayload,
   RecordTradingProtocolPayload,
   RecordCompanyOfTheDayPayload,
@@ -418,6 +419,17 @@ export class EvaluateAdaptationMeasurementCommand implements ICommand {
       return { valid: false, error: 'proposalId is required.' };
     }
     return { valid: true };
+  }
+}
+
+export class ScanAdaptationsCommand implements ICommand {
+  readonly type = 'ScanAdaptations';
+  constructor(public payload: ScanAdaptationsPayload) {}
+
+  validate() {
+    return ['7d','30d','60d','90d'].includes(this.payload.window)
+      ? { valid: true }
+      : { valid: false, error: 'window must be one of 7d, 30d, 60d, 90d.' };
   }
 }
 
