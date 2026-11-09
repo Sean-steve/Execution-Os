@@ -31,6 +31,7 @@ import {
   RetainAdaptationProposalCommand,
   RejectAdaptationProposalCommand,
   EvaluateAdaptationMeasurementCommand,
+  ScanAdaptationsCommand,
   AcceptDisciplinePenaltyCommand,
   RecordTradingProtocolCommand,
   RecordCompanyOfTheDayCommand,
@@ -232,6 +233,9 @@ export class ExecutionApplicationService {
         break;
       case 'EvaluateAdaptationMeasurement':
         command = new EvaluateAdaptationMeasurementCommand(desc.payload);
+        break;
+      case 'ScanAdaptations':
+        command = new ScanAdaptationsCommand(desc.payload);
         break;
       case 'RecordTradingProtocol':
         command = new RecordTradingProtocolCommand(desc.payload);
