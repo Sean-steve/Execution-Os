@@ -36,6 +36,7 @@ import {
   RecordCompanyOfTheDayCommand,
   RecordDailyReviewCommand,
   RecordIdentityStatusCommand,
+  LateWakeRecoveryCommand,
   CreatePerformanceSessionCommand,
   PreparePerformanceSessionCommand,
   ReadyPerformanceSessionCommand,
