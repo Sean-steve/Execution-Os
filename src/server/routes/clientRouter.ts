@@ -6,6 +6,8 @@ import { IHOSBoundaryStore } from '../../hos/boundaryStore';
 import { HOSSubjectContext, HOSIdentityBridge } from '../../hos/identityBridge';
 import { HOSSubjectRuntimeRegistry } from '../../hos/runtimeRegistry';
 import { AuthenticationError, AuthorizationError, ValidationError } from '../errors';
+import { performanceAiPartner } from '../../services/performanceAiPartner';
+import { BackgroundJobType } from '../../types';
 
 const CLIENT_COMMANDS = new Set([
   'PlanTomorrow','ActivateDay','LateWakeRecovery',
@@ -131,6 +133,100 @@ export function createClientRouter(
     try {
       const subject = subjectFrom(req);
       res.status(200).json({ success: true, data: runtime?.status(subject) || null });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get('/scheduler/status', async (req, res, next) => {
+    try {
+      const subject = subjectFrom(req);
+      HOSIdentityBridge.requirePermission(subject, 'execution.schedule.read');
+      HOSIdentityBridge.requireConsent(subject, 'execution.schedule');
+      const data = await runtime?.schedulerStatus(subject);
+      res.status(200).json({ success: true, data: data || null });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post('/scheduler/tick', async (req, res, next) => {
+    try {
+      const subject = subjectFrom(req);
+      HOSIdentityBridge.requirePermission(subject, 'execution.governance.write');
+      HOSIdentityBridge.requireConsent(subject, 'execution.control');
+      if (!runtime) throw new ValidationError('HOS runtime registry is unavailable.');
+      const data = await runtime.triggerTick(subject, {
+        forceDayBoundary: Boolean(req.body?.forceDayBoundary),
+        targetMinutes: req.body?.targetMinutes === undefined ? undefined : Number(req.body.targetMinutes),
+      });
+      res.status(200).json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post('/scheduler/run-job', async (req, res, next) => {
+    try {
+      const subject = subjectFrom(req);
+      HOSIdentityBridge.requirePermission(subject, 'execution.governance.write');
+      HOSIdentityBridge.requireConsent(subject, 'execution.control');
+      const jobType = req.body?.jobType as BackgroundJobType | undefined;
+      if (!jobType) throw new ValidationError('jobType is required.');
+      if (!runtime) throw new ValidationError('HOS runtime registry is unavailable.');
+      const data = await runtime.runJob(subject, jobType);
+      res.status(200).json({ success: data.success, data });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post('/scheduler/toggle', async (req, res, next) => {
+    try {
+      const subject = subjectFrom(req);
+      HOSIdentityBridge.requirePermission(subject, 'execution.governance.write');
+      HOSIdentityBridge.requireConsent(subject, 'execution.control');
+      if (typeof req.body?.enabled !== 'boolean') throw new ValidationError('enabled must be boolean.');
+      if (!runtime) throw new ValidationError('HOS runtime registry is unavailable.');
+      const data = await runtime.setWorkerEnabled(subject, req.body.enabled);
+      res.status(200).json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post('/notifications/:id/read', async (req, res, next) => {
+    try {
+      const subject = subjectFrom(req);
+      HOSIdentityBridge.requirePermission(subject, 'execution.schedule.write');
+      HOSIdentityBridge.requireConsent(subject, 'execution.schedule');
+      const repository = repositories.forSubject(subject);
+      const state = await loadBoundState(repository, subject);
+      const id = req.params.id;
+      state.notifications = (state.notifications || []).map(notification =>
+        notification.id === id ? { ...notification, read: true } : notification
+      );
+      await repository.saveState(state);
+      res.status(200).json({ success: true, state, data: { id, read: true } });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post('/performance/sessions/:id/ai', async (req, res, next) => {
+    try {
+      const subject = subjectFrom(req);
+      HOSIdentityBridge.requirePermission(subject, 'execution.session.write');
+      HOSIdentityBridge.requireConsent(subject, 'execution.performance');
+      const repository = repositories.forSubject(subject);
+      const state = await loadBoundState(repository, subject);
+      const session = (state.performanceSessions || []).find(item => item.id === req.params.id);
+      if (!session) throw new ValidationError('Performance session not found.');
+      const message = String(req.body?.message || '').trim();
+      if (!message) throw new ValidationError('message is required.');
+      const mode = req.body?.mode || session.environmentConfig.aiMode;
+      const data = await performanceAiPartner.respond({ session, state, message, mode });
+      res.status(200).json({ success: true, data });
     } catch (err) {
       next(err);
     }
