@@ -114,16 +114,21 @@ export class AuthoritativeRuntimeClient {
     return json.state as AppState;
   }
 
-  async executeCommand<TData = any>(command: ICommand<TData>): Promise<CommandResult<TData>> {
-    const idempotencyKey =
+  async executeDescriptor<TData = any>(
+    type: string,
+    payload: any = {},
+    idempotencyKey?: string
+  ): Promise<CommandResult<TData>> {
+    const key = idempotencyKey || (
       typeof crypto !== 'undefined' && 'randomUUID' in crypto
         ? `e11-${crypto.randomUUID()}`
-        : `e11-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        : `e11-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
 
     const json = await this.request('/api/v1/client/commands', {
       method: 'POST',
-      headers: { 'Idempotency-Key': idempotencyKey },
-      body: JSON.stringify({ type: command.type, payload: (command as any).payload || {} }),
+      headers: { 'Idempotency-Key': key },
+      body: JSON.stringify({ type, payload }),
     });
 
     return {
@@ -133,6 +138,10 @@ export class AuthoritativeRuntimeClient {
       data: json?.data,
       error: json?.error,
     } as CommandResult<TData>;
+  }
+
+  async executeCommand<TData = any>(command: ICommand<TData>): Promise<CommandResult<TData>> {
+    return this.executeDescriptor<TData>(command.type, (command as any).payload || {});
   }
 }
 
