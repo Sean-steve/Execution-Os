@@ -309,13 +309,14 @@ export const NowView: React.FC<NowViewProps> = ({
                 {state.activeHumanDecision.options.map(option => (
                   <button
                     key={option.id}
-                    onClick={() => {
-                      sound.playChime('success');
-                      onUpdateState(prev => ({
-                        ...prev,
-                        activeHumanDecision: null,
-                        lastDecisionReason: `User selected: ${option.label}`,
-                      }));
+                    onClick={async () => {
+                      const decisionId = state.activeHumanDecision?.id;
+                      if (!decisionId) return;
+                      const result = await defaultApplicationService.approveDecision(decisionId, option.id, state);
+                      if (result.success && result.state) {
+                        sound.playChime('success');
+                        onUpdateState(() => result.state!);
+                      }
                     }}
                     className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold shadow-xs transition-colors"
                   >
