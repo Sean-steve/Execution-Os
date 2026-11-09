@@ -36,6 +36,7 @@ import {
   RecordCompanyOfTheDayCommand,
   RecordDailyReviewCommand,
   RecordIdentityStatusCommand,
+  RecordExecutionProgressCommand,
   LateWakeRecoveryCommand,
   CreatePerformanceSessionCommand,
   PreparePerformanceSessionCommand,
@@ -241,6 +242,9 @@ export class ExecutionApplicationService {
         break;
       case 'RecordIdentityStatus':
         command = new RecordIdentityStatusCommand(desc.payload);
+        break;
+      case 'RecordExecutionProgress':
+        command = new RecordExecutionProgressCommand(desc.payload);
         break;
       default:
         throw new Error(`Unknown command type: ${desc.type}`);
