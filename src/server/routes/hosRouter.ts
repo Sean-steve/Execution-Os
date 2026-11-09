@@ -16,6 +16,7 @@ import {
 } from '../../hos/lifecycle';
 import { HOSCapabilityService } from '../../hos/capabilityService';
 import { ApiError, AuthenticationError, ValidationError } from '../errors';
+import { SecurityEngine } from '../security';
 import { IHOSBoundaryStore, MemoryHOSBoundaryStore } from '../../hos/boundaryStore';
 import { getHOSReadinessSnapshot } from '../../hos/productionHardening';
 import { HOSSubjectRuntimeRegistry } from '../../hos/runtimeRegistry';
@@ -84,6 +85,32 @@ export function createHOSRouter(
           issuer: subject.issuer,
           permissions: subject.permissions,
           consentScopes: subject.consentScopes,
+        },
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post('/client-session', (req, res, next) => {
+    try {
+      const subject = subjectFrom(req);
+      const durationSeconds = Math.max(60, Math.min(Number(req.body?.durationSeconds || 900), 3600));
+      const token = SecurityEngine.generateHOSClientSessionToken({
+        subjectId: subject.subjectId,
+        tenantId: subject.tenantId,
+        permissions: subject.permissions,
+        consentScopes: subject.consentScopes,
+        durationSeconds,
+      });
+      res.status(200).json({
+        success: true,
+        data: {
+          token,
+          tokenType: 'Bearer',
+          subjectId: subject.subjectId,
+          tenantId: subject.tenantId,
+          expiresAtUtc: new Date(Date.now() + durationSeconds * 1000).toISOString(),
         },
       });
     } catch (err) {
