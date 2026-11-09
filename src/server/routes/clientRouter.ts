@@ -14,7 +14,7 @@ const CLIENT_COMMANDS = new Set([
   'RecalculateDay','ApproveDecision','RejectDecision','PauseAutonomy','ResumeAutonomy',
   'SetSystemMode','SetDayType','TriggerFallback','ApplyAdaptationProposal',
   'RollbackAdaptationProposal','RetainAdaptationProposal','RejectAdaptationProposal',
-  'EvaluateAdaptationMeasurement','AcceptDisciplinePenalty','RecordTradingProtocol',
+  'EvaluateAdaptationMeasurement','ScanAdaptations','AcceptDisciplinePenalty','RecordTradingProtocol',
   'RecordCompanyOfTheDay','RecordDailyReview','RecordIdentityStatus','RecordExecutionProgress',
   'SetStrictTimeEnforcement','CreateReward',
   'CreatePerformanceSession','PreparePerformanceSession','ReadyPerformanceSession',
@@ -65,7 +65,7 @@ function assertCommandAuthority(subject: HOSSubjectContext, type: string) {
     HOSIdentityBridge.requireConsent(subject, 'execution.schedule');
     return;
   }
-  if (['TriggerFallback','ApplyAdaptationProposal','RollbackAdaptationProposal','RetainAdaptationProposal','RejectAdaptationProposal','EvaluateAdaptationMeasurement'].includes(type)) {
+  if (['TriggerFallback','ApplyAdaptationProposal','RollbackAdaptationProposal','RetainAdaptationProposal','RejectAdaptationProposal','EvaluateAdaptationMeasurement','ScanAdaptations'].includes(type)) {
     HOSIdentityBridge.requirePermission(subject, 'execution.fallback.write');
     HOSIdentityBridge.requireConsent(subject, 'execution.adaptation');
     return;
