@@ -313,21 +313,31 @@ export const TomorrowPlannerView: React.FC<TomorrowPlannerViewProps> = ({
     });
   };
 
-  // Simulate Late Wake Recovery (+30m, +60m, +90m)
-  const handleSimulateLateWake = (offsetMinutes: number) => {
+  // Simulate Late Wake Recovery (+30m, +60m, +90m) through the same governed command path.
+  const handleSimulateLateWake = async (offsetMinutes: number) => {
     const plannedWakeMins = currentPlan.desiredWakeMinutes || 330;
     const simulatedActualWake = plannedWakeMins + offsetMinutes;
 
     sound.playChime('warning');
-    const { state: nextState, result } = executeLateWakeRecovery(state, simulatedActualWake);
-    onUpdateState(() => nextState);
-    setRecoveryResult(result);
-    setActivationResult(null);
+    const result = await defaultApplicationService.execute({
+      type: 'LateWakeRecovery',
+      payload: {
+        actualWakeMinutes: simulatedActualWake,
+        reason: `Planner recovery simulation (+${offsetMinutes}m)`,
+      },
+    }, state);
 
-    setBannerMessage({
-      type: 'INFO',
-      text: `Late Wake Recovery simulated (+${offsetMinutes}m drift). Routine state shifted to ${result.compressedRoutineState}. ${result.fallbacksApplied.length} morning anchors compressed.`,
-    });
+    if (result.success && result.state) {
+      onUpdateState(() => result.state!);
+      setRecoveryResult(null);
+      setActivationResult(null);
+      setBannerMessage({
+        type: 'INFO',
+        text: `Late Wake Recovery evaluated through the governed runtime (+${offsetMinutes}m). Routine state: ${result.state.routineState}.`,
+      });
+    } else {
+      setBannerMessage({ type: 'ERROR', text: result.error || 'Late wake recovery evaluation failed.' });
+    }
   };
 
   return (
