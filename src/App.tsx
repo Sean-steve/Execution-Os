@@ -56,6 +56,7 @@ export default function App() {
   });
   const [disciplineTaskToReview, setDisciplineTaskToReview] = useState<RoutineTask | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const authoritativeRuntime = authoritativeRuntimeClient.prefersAuthoritativeRuntime();
 
   // Browser persistence is a cache only in E11. The authoritative state lives on the backend.
   useEffect(() => {
@@ -169,8 +170,8 @@ export default function App() {
 
     if (result.success && result.state) {
       setState(result.state);
-    } else {
-      // Fallback
+    } else if (!authoritativeRuntime) {
+      // Legacy local-only fallback. Authoritative mode never fabricates a successful mutation.
       setState(prev => {
         const updatedTasks = prev.tasks.map(t =>
           t.id === task.id ? { 
@@ -209,6 +210,11 @@ export default function App() {
   };
 
   const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (authoritativeRuntime) {
+      sound.playChime('warning');
+      e.target.value = '';
+      return;
+    }
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
@@ -228,6 +234,11 @@ export default function App() {
   };
 
   const handleResetToDefaults = () => {
+    if (authoritativeRuntime) {
+      setShowResetConfirm(false);
+      sound.playChime('warning');
+      return;
+    }
     setState(DEFAULT_APP_STATE);
     setShowResetConfirm(false);
     sound.playChime('start');
@@ -500,25 +511,29 @@ export default function App() {
               <span>Export</span>
             </button>
 
-            <label className="hover:text-slate-900 flex items-center gap-1 cursor-pointer transition-colors text-slate-600">
-              <Upload className="w-3.5 h-3.5" />
-              <span>Import</span>
-              <input
-                type="file"
-                accept=".json"
-                onChange={handleImportBackup}
-                className="hidden"
-              />
-            </label>
+            {!authoritativeRuntime && (
+              <>
+                <label className="hover:text-slate-900 flex items-center gap-1 cursor-pointer transition-colors text-slate-600">
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Import</span>
+                  <input
+                    type="file"
+                    accept=".json"
+                    onChange={handleImportBackup}
+                    className="hidden"
+                  />
+                </label>
 
-            <button
-              onClick={() => setShowResetConfirm(true)}
-              className="hover:text-red-600 flex items-center gap-1 transition-colors text-slate-500"
-              title="Reset state to initial routine defaults"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Reset</span>
-            </button>
+                <button
+                  onClick={() => setShowResetConfirm(true)}
+                  className="hover:text-red-600 flex items-center gap-1 transition-colors text-slate-500"
+                  title="Reset state to initial routine defaults"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Reset</span>
+                </button>
+              </>
+            )}
           </div>
         </div>
       </footer>
