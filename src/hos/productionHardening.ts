@@ -4,6 +4,7 @@ import { RateLimiter } from '../server/rateLimiter';
 import { defaultMetrics } from '../services/metricsService';
 import { defaultObservability } from '../services/observabilityService';
 import { HOS_ENGINE_MANIFEST } from './engineManifest';
+import { getExecutionPersistenceMode } from '../canonical/postgresCanonicalStorageEngine';
 
 export interface HOSProductionRuntimeValidation {
   valid: boolean;
@@ -23,6 +24,8 @@ export interface HOSReadinessSnapshot {
     identityMode: boolean;
     eventMeshTransport: boolean;
     runtimeStorageIsolation: boolean;
+    postgresPersistence: boolean;
+    databaseConfigured: boolean;
   };
   errors: string[];
   warnings: string[];
@@ -73,6 +76,32 @@ export function validateHOSProductionRuntime(): HOSProductionRuntimeValidation {
     }
   }
 
+  const persistenceMode = getExecutionPersistenceMode();
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+
+  if (persistenceMode === 'postgres') {
+    if (!databaseUrl) {
+      errors.push('DATABASE_URL is required when EXECUTION_OS_PERSISTENCE=postgres.');
+    } else {
+      try {
+        const parsed = new URL(databaseUrl);
+        if (!['postgres:', 'postgresql:'].includes(parsed.protocol)) {
+          errors.push('DATABASE_URL must use the postgres:// or postgresql:// scheme.');
+        }
+      } catch {
+        errors.push('DATABASE_URL must be a valid PostgreSQL connection URL.');
+      }
+    }
+
+    if (process.env.NODE_ENV === 'production' && String(process.env.DATABASE_SSL || '').toLowerCase() === 'disable') {
+      warnings.push('DATABASE_SSL=disable in production; use TLS unless PostgreSQL is isolated on a trusted private network.');
+    }
+  } else if (process.env.EXECUTION_OS_REQUIRE_POSTGRES === 'true') {
+    errors.push('EXECUTION_OS_REQUIRE_POSTGRES=true requires EXECUTION_OS_PERSISTENCE=postgres.');
+  } else {
+    warnings.push('Execution state is using file persistence. Set EXECUTION_OS_PERSISTENCE=postgres to activate E10 durable backend persistence.');
+  }
+
   const cwd = process.cwd();
   const sourceDir = path.resolve(cwd, 'src');
   const boundaryPath = path.resolve(
@@ -85,7 +114,8 @@ export function validateHOSProductionRuntime(): HOSProductionRuntimeValidation {
     process.env.HEE_DLQ_PATH || path.join(cwd, 'data', 'dead_letter_queue.json')
   );
 
-  if (isPathInside(boundaryPath, sourceDir) || isPathInside(subjectDir, sourceDir) || isPathInside(dlqPath, sourceDir)) {
+  const subjectStorageUnsafe = persistenceMode === 'file' && isPathInside(subjectDir, sourceDir);
+  if (isPathInside(boundaryPath, sourceDir) || subjectStorageUnsafe || isPathInside(dlqPath, sourceDir)) {
     errors.push('Production runtime state must not be stored inside the source tree.');
   }
 
@@ -123,7 +153,9 @@ export function getHOSReadinessSnapshot(): HOSReadinessSnapshot {
     /runtime state|storage locations/i.test(error)
   );
 
-  const ready = validation.valid && (identityMode === 'HOS' || process.env.NODE_ENV !== 'production');
+  const persistenceMode = getExecutionPersistenceMode();
+  const databaseConfigured = persistenceMode !== 'postgres' || Boolean(process.env.DATABASE_URL?.trim());
+  const ready = validation.valid && databaseConfigured && (identityMode === 'HOS' || process.env.NODE_ENV !== 'production');
 
   return {
     status: ready ? 'ready' : 'not_ready',
@@ -137,6 +169,8 @@ export function getHOSReadinessSnapshot(): HOSReadinessSnapshot {
       identityMode: identityMode === 'HOS',
       eventMeshTransport: transportSecure,
       runtimeStorageIsolation: storageIsolated,
+      postgresPersistence: persistenceMode === 'postgres',
+      databaseConfigured,
     },
     errors: validation.errors,
     warnings: validation.warnings,

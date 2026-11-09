@@ -3,20 +3,43 @@ import express from 'express';
 import { createApp } from './src/server/createApp';
 import { defaultBackgroundWorker } from './src/services/backgroundWorker';
 import { getExecutionIdentityMode } from './src/server/auth';
-import { createServer as createViteServer } from 'vite';
+import { assertPostgresRuntimeReady, getExecutionPersistenceMode } from './src/canonical/postgresCanonicalStorageEngine';
+import { HOSSubjectScopedRepositoryFactory } from './src/hos/repositoryFactory';
+import { defaultHOSEngineLifecycleRegistry } from './src/hos/lifecycle';
+import { defaultHOSBoundaryStore } from './src/hos/boundaryStore';
+import { HOSSubjectRuntimeRegistry } from './src/hos/runtimeRegistry';
 
 async function startServer() {
-  const app = createApp();
-  const PORT = Number.parseInt(process.env.PORT || '3000', 10);
   const identityMode = getExecutionIdentityMode();
+  const persistenceMode = getExecutionPersistenceMode();
 
-  // A global standalone worker has no HOS subject/tenant context and therefore
-  // must never become an execution authority in HOS mode.
+  await assertPostgresRuntimeReady();
+
+  const hosRepositories = new HOSSubjectScopedRepositoryFactory(undefined, persistenceMode);
+  const hosRuntime = new HOSSubjectRuntimeRegistry(
+    hosRepositories,
+    defaultHOSEngineLifecycleRegistry,
+    defaultHOSBoundaryStore
+  );
+  const app = createApp({
+    hosRepositoryFactory: hosRepositories,
+    hosLifecycle: defaultHOSEngineLifecycleRegistry,
+    hosBoundaryStore: defaultHOSBoundaryStore,
+    hosRuntimeRegistry: hosRuntime,
+  });
+  const PORT = Number.parseInt(process.env.PORT || '3000', 10);
+
   if (identityMode === 'LEGACY_STANDALONE') {
     defaultBackgroundWorker.start();
+  } else {
+    const restored = await hosRuntime.restoreActiveWorkers();
+    if (restored > 0) {
+      console.log(`[Execution OS] Restored ${restored} active HOS subject runtime worker(s).`);
+    }
   }
 
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
@@ -31,7 +54,9 @@ async function startServer() {
   }
 
   const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Execution OS Backend Service running on port ${PORT} in ${identityMode} identity mode`);
+    console.log(
+      `Execution OS Backend Service running on port ${PORT} in ${identityMode} identity mode with ${persistenceMode} persistence`
+    );
   });
 
   let shuttingDown = false;
@@ -40,6 +65,7 @@ async function startServer() {
     shuttingDown = true;
     console.log(`[Execution OS] Received ${signal}; stopping new work and shutting down cleanly.`);
     defaultBackgroundWorker.stop();
+    hosRuntime.shutdown();
 
     const forceExit = setTimeout(() => {
       console.error('[Execution OS] Graceful shutdown deadline exceeded.');

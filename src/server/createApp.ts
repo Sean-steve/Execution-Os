@@ -10,6 +10,7 @@ import { HOSEngineLifecycleRegistry, defaultHOSEngineLifecycleRegistry } from '.
 import { ApiError, InternalError } from './errors';
 import { SecurityEngine } from './security';
 import { IHOSBoundaryStore, defaultHOSBoundaryStore } from '../hos/boundaryStore';
+import { HOSSubjectRuntimeRegistry } from '../hos/runtimeRegistry';
 import {
   createHOSRateLimitMiddleware,
   installApiProductionHardening,
@@ -26,6 +27,7 @@ export interface AppOptions {
   hosEventMesh?: HOSEventMeshBridge;
   hosLifecycle?: HOSEngineLifecycleRegistry;
   hosBoundaryStore?: IHOSBoundaryStore;
+  hosRuntimeRegistry?: HOSSubjectRuntimeRegistry;
 }
 
 function requestIdFrom(req: Request): string {
@@ -49,13 +51,19 @@ export function createApp(options: AppOptions = {}): Express {
 
   const app = express();
   const repository = options.repository || defaultExecutionRepository;
+  const hosRepositories = options.hosRepositoryFactory || new HOSSubjectScopedRepositoryFactory();
+  const hosLifecycle = options.hosLifecycle || defaultHOSEngineLifecycleRegistry;
+  const hosBoundaryStore = options.hosBoundaryStore || defaultHOSBoundaryStore;
+  const hosRuntime = options.hosRuntimeRegistry || new HOSSubjectRuntimeRegistry(
+    hosRepositories,
+    hosLifecycle,
+    hosBoundaryStore
+  );
 
-  // 1. Base production hardening, telemetry and payload bounds
   installApiProductionHardening(app);
   app.use(express.json({ limit: process.env.EXECUTION_OS_MAX_JSON_BODY || '1mb' }));
   app.use(express.urlencoded({ extended: true, limit: process.env.EXECUTION_OS_MAX_JSON_BODY || '1mb' }));
 
-  // 2. Request correlation metadata with bounded/sanitized caller-provided IDs
   app.use((req: Request, res: Response, next: NextFunction) => {
     const reqId = requestIdFrom(req);
     req.requestId = reqId;
@@ -63,14 +71,9 @@ export function createApp(options: AppOptions = {}): Express {
     next();
   });
 
-  // 3. Authentication & HOS subject binding
   app.use(authMiddleware);
-
-  // 4. HOS boundary abuse protection. Public HOS health/manifest paths are
-  // rate-limited by network identity; authenticated calls are scoped by tenant+subject.
   app.use('/api/v1/hos', createHOSRateLimitMiddleware());
 
-  // 5. Process liveness. Integration readiness is exposed separately by the HOS router.
   app.get('/api/health', (_req: Request, res: Response) => {
     res.status(200).json({
       status: 'ok',
@@ -79,21 +82,18 @@ export function createApp(options: AppOptions = {}): Express {
     });
   });
 
-  // 6. HumanKernelOS engine adapter
   const hosRouter = createHOSRouter(
-    options.hosRepositoryFactory || new HOSSubjectScopedRepositoryFactory(),
+    hosRepositories,
     options.hosEventMesh || defaultHOSEventMeshBridge,
-    options.hosLifecycle || defaultHOSEngineLifecycleRegistry,
-    options.hosBoundaryStore || defaultHOSBoundaryStore
+    hosLifecycle,
+    hosBoundaryStore,
+    hosRuntime
   );
   app.use('/api/v1/hos', hosRouter);
 
-  // 7. Versioned Execution OS legacy/internal APIs
   const heeRouter = createHeeRouter(repository, options.clock);
   app.use('/api/v1/hee', heeRouter);
 
-  // 8. Global structured error handler. Production clients never receive
-  // stack traces or raw unhandled exception messages.
   app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
     const requestId = req.requestId;
 
