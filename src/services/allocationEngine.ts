@@ -4,7 +4,10 @@ import { checkTaskDependencies } from './dependencyEngine';
 import { getFallbackPolicyForTask, selectOptimalFallbackTier } from './fallbackEngine';
 import { getWeeklyPerformanceFitModifier } from './weeklyPerformanceIntelligence';
 import { getHumanStateExecutionFitModifier } from '../hos/humanStateDecisionBridge';
-import { calculateDynamicAllocations as calculateLegacyDynamicAllocations } from '../adapters/legacyStandaloneAllocationEngine';
+import {
+  calculateDynamicAllocations as calculateLegacyDynamicAllocations,
+  evaluatePerformanceExtensionAllocation as evaluateLegacyPerformanceExtensionAllocation,
+} from '../adapters/legacyStandaloneAllocationEngine';
 import {
   getAuthoritativeProtectedCommitments,
   requestSingleActivityScheduleChange,
@@ -202,6 +205,9 @@ export function evaluatePerformanceExtensionAllocation(
   activityId: string,
   requestedMinutes: number
 ): PerformanceExtensionAllocationResult {
+  if ((state as any).legacyStandaloneCompatibility) {
+    return evaluateLegacyPerformanceExtensionAllocation(state, activityId, requestedMinutes);
+  }
   const task = state.tasks.find(t => t.id === activityId);
   if (!task) return { approved: false, reason: `Activity ${activityId} not found.`, state };
 
