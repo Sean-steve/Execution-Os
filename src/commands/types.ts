@@ -178,6 +178,11 @@ export interface EvaluateAdaptationMeasurementPayload {
   proposalId: string;
 }
 
+export interface ScanAdaptationsPayload {
+  window: import('../types').LongitudinalWindow;
+}
+
+
 export interface AcceptDisciplinePenaltyPayload {
   taskId: string;
   penaltyPoints?: number;
