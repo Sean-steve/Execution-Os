@@ -35,6 +35,8 @@ import {
   RecordDailyReviewCommand,
   RecordIdentityStatusCommand,
   RecordExecutionProgressCommand,
+  SetStrictTimeEnforcementCommand,
+  CreateRewardCommand,
   LateWakeRecoveryCommand,
   CreatePerformanceSessionCommand,
   PreparePerformanceSessionCommand,
@@ -868,6 +870,32 @@ export class TransactionPipeline {
             morningOutdoorMinutes: command.payload.morningOutdoorMinutes,
             meditationMinutes: command.payload.meditationMinutes,
           },
+          state,
+          'USER',
+          undefined,
+          clock
+        ));
+      } else if (command instanceof SetStrictTimeEnforcementCommand) {
+        state.strictTimeEnforcement = command.payload.enabled;
+        createdEvents.push(createSystemEvent(
+          'RoutineChanged',
+          'strict-time-enforcement',
+          { strictTimeEnforcement: state.strictTimeEnforcement },
+          state,
+          'GOVERNANCE_GUARD',
+          undefined,
+          clock
+        ));
+      } else if (command instanceof CreateRewardCommand) {
+        const reward = command.payload.reward;
+        state.rewards = [
+          ...(state.rewards || []).filter(existing => existing.id !== reward.id),
+          reward,
+        ];
+        createdEvents.push(createSystemEvent(
+          'PointsAwarded',
+          reward.id,
+          { action: 'REWARD_CREATED', rewardId: reward.id, pointsRequired: reward.pointsRequired },
           state,
           'USER',
           undefined,
