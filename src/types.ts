@@ -441,6 +441,7 @@ export type EventType =
   | 'ExecutionInterrupted'
   | 'ExecutionResumed'
   | 'ExecutionCompleted'
+  | 'ExecutionProgressRecorded'
   | 'DeviationDetected'
   | 'InterventionTriggered'
   | 'FallbackEvaluated'
