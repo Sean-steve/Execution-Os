@@ -125,6 +125,31 @@ export class HOSSubjectRuntimeRegistry {
     };
   }
 
+  async schedulerStatus(subject: HOSSubjectContext) {
+    this.ensureForSubject(subject);
+    return this.workerFor(subject).getStatus();
+  }
+
+  async triggerTick(subject: HOSSubjectContext, options: { forceDayBoundary?: boolean; targetMinutes?: number } = {}) {
+    this.ensureForSubject(subject);
+    return this.workerFor(subject).tick({
+      forceDayBoundary: Boolean(options.forceDayBoundary),
+      targetMinutes: options.targetMinutes,
+      triggerOrigin: 'MANUAL_TRIGGER',
+    });
+  }
+
+  async runJob(subject: HOSSubjectContext, jobType: import('../types').BackgroundJobType) {
+    this.ensureForSubject(subject);
+    return this.workerFor(subject).runJob(jobType);
+  }
+
+  async setWorkerEnabled(subject: HOSSubjectContext, enabled: boolean) {
+    const worker = this.workerFor(subject);
+    worker.setEnabled(enabled);
+    return worker.getStatus();
+  }
+
   async restoreActiveWorkers(): Promise<number> {
     const pool = this.postgresPool();
     const subjects: Array<{ tenantId: string; subjectId: string }> = [];
