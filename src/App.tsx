@@ -45,6 +45,7 @@ import { defaultApplicationService } from './services/executionApplicationServic
 import { AcceptDisciplinePenaltyCommand } from './commands';
 import { reconcileLifecycleState } from './services/reconciliationEngine';
 import { defaultCrossDeviceSyncEngine } from './services/crossDeviceSyncEngine';
+import { authoritativeRuntimeClient } from './services/authoritativeRuntimeClient';
 
 export default function App() {
   const [state, setState] = useState<AppState>(() => {
@@ -56,13 +57,39 @@ export default function App() {
   const [disciplineTaskToReview, setDisciplineTaskToReview] = useState<RoutineTask | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
-  // Automatically persist state changes to localStorage
+  // Browser persistence is a cache only in E11. The authoritative state lives on the backend.
   useEffect(() => {
     saveAppState(state);
   }, [state]);
 
-  // Periodic Cross-Device Background Sync
+  // Hydrate from the subject-scoped authoritative backend when an HOS client session is available.
   useEffect(() => {
+    let cancelled = false;
+    const hydrate = async () => {
+      if (!authoritativeRuntimeClient.canUseAuthoritativeRuntime()) return;
+      try {
+        const remote = await authoritativeRuntimeClient.loadState();
+        if (!cancelled) setState(remote);
+      } catch (error) {
+        console.warn('[Execution OS] Authoritative hydration failed:', error);
+      }
+    };
+
+    const uninstallHostBridge = authoritativeRuntimeClient.installHostSessionBridge();
+    const unsubscribeSession = authoritativeRuntimeClient.subscribeSession(() => { void hydrate(); });
+    void hydrate();
+
+    return () => {
+      cancelled = true;
+      unsubscribeSession();
+      uninstallHostBridge();
+    };
+  }, []);
+
+  // Legacy cross-device HEE synchronization is disabled whenever E11 authoritative runtime is preferred.
+  useEffect(() => {
+    if (authoritativeRuntimeClient.prefersAuthoritativeRuntime()) return;
+
     defaultCrossDeviceSyncEngine.startPeriodicSync(4000, updatedState => {
       setState(updatedState);
     });
